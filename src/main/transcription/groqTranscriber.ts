@@ -60,13 +60,22 @@ export class GroqTranscriber {
     const fileBuffer = fs.readFileSync(wavPath);
     const fileName = path.basename(wavPath);
 
+    // Content type follows the upload extension (FLAC/OGG/Opus experiment).
+    const ext = path.extname(wavPath).toLowerCase();
+    const contentType =
+      ext === '.flac' ? 'audio/flac' :
+      ext === '.ogg' ? 'audio/ogg' :
+      ext === '.opus' ? 'audio/opus' :
+      'audio/wav';
+    console.log(`[groq] Uploading ${(fileBuffer.length / 1024).toFixed(0)}KB (${contentType})`);
+
     // Build multipart form data manually
     const boundary = '----EchoBoundary' + Date.now();
     const parts: Buffer[] = [];
 
     // file field
     parts.push(Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: audio/wav\r\n\r\n`
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${contentType}\r\n\r\n`
     ));
     parts.push(fileBuffer);
     parts.push(Buffer.from('\r\n'));

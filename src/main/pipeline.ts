@@ -99,7 +99,9 @@ async function transcribeAudio(
 ): Promise<{ text: string; segments: TranscriptionSegment[] }> {
   if (sttEngine === 'groq') {
     const groq = new GroqTranscriber(getSetting('groqApiKey'));
-    const text = await groq.transcribe(cleanPath, { prompt: opts?.biasPrompt, language: opts?.language });
+    // EXPERIMENT: compress the upload (FLAC by default) to cut upload bytes.
+    const uploadPath = AudioRecorder.encodeForUpload(cleanPath);
+    const text = await groq.transcribe(uploadPath, { prompt: opts?.biasPrompt, language: opts?.language });
     return { text, segments: [] };
   }
   if (sttEngine === 'macos') {

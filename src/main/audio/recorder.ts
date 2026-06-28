@@ -247,6 +247,46 @@ export class AudioRecorder extends EventEmitter {
   }
 
   /**
+   * EXPERIMENT: re-encode the cleaned WAV to a smaller format before uploading
+   * to a cloud STT engine. At 16kHz mono, WAV is ~32KB/s of uncompressed PCM;
+   * FLAC is lossless (~half the bytes, identical transcription), OGG/Opus are
+   * lossy but far smaller. Controlled by ECHO_STT_UPLOAD_FORMAT (wav|flac|ogg|opus),
+   * default `flac` on this branch. Set to `wav` to reproduce the current
+   * (online) behavior for an apples-to-apples comparison.
+   *
+   * Logs the size reduction and encode time so the upload saving can be
+   * weighed against the local CPU cost. Falls back to the original WAV on any
+   * failure.
+   */
+  static encodeForUpload(wavPath: string): string {
+    const fmt = (process.env.ECHO_STT_UPLOAD_FORMAT || 'flac').toLowerCase();
+    if (fmt === 'wav') return wavPath;
+    if (!['flac', 'ogg', 'opus'].includes(fmt)) {
+      console.warn(`[recorder] Unknown ECHO_STT_UPLOAD_FORMAT="${fmt}", uploading wav`);
+      return wavPath;
+    }
+
+    const outPath = wavPath.replace(/\.wav$/, `.${fmt}`);
+    try {
+      // FLAC: -C 8 = max lossless compression (still ms-fast at this size).
+      // OGG (Vorbis): -C 4 ≈ quality 4, small + fine for speech.
+      const enc = fmt === 'flac' ? '-C 8' : fmt === 'ogg' ? '-C 4' : '';
+      const t0 = Date.now();
+      execSync(`sox "${wavPath}" ${enc} "${outPath}"`, { stdio: 'pipe', timeout: 10000 });
+      const before = fs.statSync(wavPath).size;
+      const after = fs.statSync(outPath).size;
+      console.log(
+        `[recorder] Upload encode ${fmt}: ${(before / 1024).toFixed(0)}KB → ${(after / 1024).toFixed(0)}KB ` +
+        `(-${(100 * (1 - after / before)).toFixed(0)}%, ${Date.now() - t0}ms)`,
+      );
+      return outPath;
+    } catch (err) {
+      console.warn(`[recorder] Upload encode to ${fmt} failed, using wav:`, (err as Error).message);
+      return wavPath;
+    }
+  }
+
+  /**
    * Clean up the recorded file.
    */
   cleanup(): void {
