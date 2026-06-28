@@ -1,0 +1,1535 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' ipc: http://ipc.localhost; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'">
+  <title>Echo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-body: #faf8f5;
+      --bg-sidebar: #ffffff;
+      --bg-card: #ffffff;
+      --bg-input: #f5f3f0;
+      --border-color: #e8e4df;
+      --text-primary: #1a1a1a;
+      --text-secondary: #6b6560;
+      --text-muted: #9c9590;
+      --accent: #2d8a6e;
+      --accent-hover: #247358;
+      --accent-light: #e8f5f0;
+      --danger: #d94040;
+      --warning: #d98f00;
+      --success: #2d8a6e;
+      --radius: 10px;
+      --radius-sm: 6px;
+      --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+      --shadow-hover: 0 4px 12px rgba(0,0,0,0.06);
+      --transition: 0.2s ease;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      background: var(--bg-body);
+      color: var(--text-primary);
+      font-size: 14px;
+      line-height: 1.5;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      padding: 20px 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sidebar-brand {
+      padding: 0 20px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .sidebar-brand svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    .sidebar-brand span {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+    }
+
+    .sidebar-section {
+      padding: 0 12px;
+      margin-bottom: 8px;
+    }
+
+    .sidebar-section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      padding: 12px 12px 6px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 450;
+      transition: all var(--transition);
+      user-select: none;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-input);
+      color: var(--text-primary);
+    }
+
+    .nav-item.active {
+      background: var(--accent-light);
+      color: var(--accent);
+      font-weight: 550;
+    }
+
+    .nav-item svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      opacity: 0.7;
+    }
+
+    .nav-item.active svg {
+      opacity: 1;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 16px 12px 0;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .sidebar-footer .nav-item {
+      font-size: 13px;
+    }
+
+    /* Main content */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px 40px;
+    }
+
+    .page-title {
+      font-size: 22px;
+      font-weight: 650;
+      margin-bottom: 24px;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 16px;
+      box-shadow: var(--shadow-card);
+      transition: box-shadow var(--transition);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 16px;
+    }
+
+    .card-description {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    /* Form elements */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    label .hint {
+      font-weight: 400;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      background: var(--bg-input);
+      color: var(--text-primary);
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(45, 138, 110, 0.1);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    /* Toggle switches */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .toggle-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .toggle-row:first-child {
+      padding-top: 0;
+    }
+
+    .toggle-label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .toggle-label span {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .toggle-label small {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 26px;
+      flex-shrink: 0;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background: #d4d0cc;
+      border-radius: 26px;
+      transition: background var(--transition);
+    }
+
+    .toggle-slider::before {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      left: 3px;
+      top: 3px;
+      background: white;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      transition: transform var(--transition);
+    }
+
+    .toggle input:checked + .toggle-slider {
+      background: var(--accent);
+    }
+
+    .toggle input:checked + .toggle-slider::before {
+      transform: translateX(18px);
+    }
+
+    /* Buttons */
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      transition: all var(--transition);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+      padding: 6px 12px;
+    }
+
+    .btn-danger:hover {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-secondary {
+      background: var(--bg-input);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      background: var(--border-color);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Loading spinner (on teal primary buttons) */
+    .spinner {
+      display: inline-block;
+      width: 13px;
+      height: 13px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: echo-spin 0.7s linear infinite;
+      vertical-align: -2px;
+      margin-right: 7px;
+    }
+    @keyframes echo-spin { to { transform: rotate(360deg); } }
+    .btn-secondary .spinner { border-color: var(--border-color); border-top-color: var(--accent); }
+
+    /* Status badges */
+    .status {
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .status-ok { background: var(--accent-light); color: var(--accent); }
+    .status-warn { background: #fff3e0; color: var(--warning); }
+    .status-error { background: #fde8e8; color: var(--danger); }
+
+    /* Per-permission status + inline fix button */
+    .perm-action { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .perm-fix { font-size: 11px; padding: 4px 10px; }
+
+    /* Input groups */
+    .input-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .input-group input,
+    .input-group select {
+      flex: 1;
+      margin-bottom: 0;
+    }
+
+    .input-group button {
+      flex-shrink: 0;
+    }
+
+    /* Validation status */
+    .validation-status {
+      font-size: 12px;
+      margin-top: 6px;
+      min-height: 18px;
+    }
+
+    /* Memory/template items */
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      background: var(--bg-input);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+      transition: box-shadow var(--transition);
+    }
+
+    .list-item:hover {
+      box-shadow: var(--shadow-hover);
+    }
+
+    .list-item .term {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .list-item .context {
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+
+    .list-item .misrec {
+      color: var(--warning);
+      font-size: 12px;
+    }
+
+    .list-item .remove-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 18px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .list-item .remove-btn:hover {
+      color: var(--danger);
+      background: #fde8e8;
+    }
+
+    /* History items */
+    .history-item {
+      padding: 14px 16px;
+      background: var(--bg-input);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .history-item .meta {
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+
+    .history-item .raw {
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .history-item .refined {
+      color: var(--text-primary);
+      font-weight: 450;
+    }
+
+    .history-item .error {
+      color: var(--danger);
+    }
+
+    /* Add form inline */
+    .add-form {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .add-form input,
+    .add-form select {
+      flex: 1;
+      min-width: 100px;
+    }
+
+    /* Whisper section */
+    #whisper-model-section {
+      background: var(--bg-input);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      margin-top: 12px;
+    }
+
+    /* Prompt warning */
+    .warning-banner {
+      background: #fff3e0;
+      border: 1px solid #ffe0b2;
+      color: #bf6c00;
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    /* Context preview */
+    .context-preview {
+      max-height: 300px;
+      overflow-y: auto;
+      background: var(--bg-input);
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'SF Mono', 'Menlo', monospace;
+    }
+
+    /* Tab content visibility */
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Home */
+    kbd {
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 12px;
+      padding: 1px 6px;
+      border-radius: 5px;
+      background: var(--bg-input);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+    }
+    .home-hero {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .home-hero-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--accent-light);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .home-hero-title { font-size: 16px; font-weight: 600; }
+    .home-hero-sub { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
+    .home-chip {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: var(--accent-light);
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+
+    /* Window drag region for hidden title bar */
+    .sidebar-brand {
+      -webkit-app-region: drag;
+      padding-left: 76px;
+    }
+
+    /* Stats / Insights */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow-card);
+      position: relative;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-top: 6px;
+    }
+
+    .stat-detail {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 8px;
+    }
+
+    .stat-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: var(--accent-light);
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .stat-speedup {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      margin-top: 6px;
+    }
+
+    .stat-gauge {
+      margin-top: 12px;
+      height: 6px;
+      background: var(--bg-input);
+      border-radius: 3px;
+      overflow: visible;
+      position: relative;
+    }
+
+    .stat-gauge-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.6s ease;
+    }
+
+    .stat-gauge-marker {
+      position: absolute;
+      top: -3px;
+      width: 2px;
+      height: 12px;
+      background: var(--text-muted);
+      border-radius: 1px;
+    }
+
+    .stat-gauge-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .stats-card-half {
+      margin-bottom: 0;
+    }
+
+    .app-usage-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .app-usage-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .app-usage-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      background: var(--bg-input);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+
+    .app-usage-bar-wrap {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .app-usage-name {
+      font-size: 13px;
+      color: var(--text-primary);
+      min-width: 70px;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .app-usage-bar {
+      flex: 1;
+      height: 22px;
+      background: var(--bg-input);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .app-usage-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      padding-left: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: white;
+      min-width: fit-content;
+      transition: width 0.5s ease;
+    }
+
+    .app-usage-count {
+      font-size: 12px;
+      color: var(--text-muted);
+      min-width: 30px;
+      text-align: right;
+    }
+
+    /* Streak heatmap (GitHub-style) */
+    .streak-heatmap {
+      margin-top: 12px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .heatmap-container {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .heatmap-months {
+      display: flex;
+      gap: 2px;
+    }
+
+    .heatmap-month-label {
+      width: 11px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: left;
+      overflow: visible;
+      white-space: nowrap;
+    }
+
+    .heatmap-row {
+      display: flex;
+      gap: 2px;
+    }
+
+    .heatmap-day-label {
+      width: 28px;
+      font-size: 10px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .heatmap-cell {
+      width: 11px;
+      height: 11px;
+      border-radius: 2px;
+      background: var(--bg-input);
+      flex-shrink: 0;
+    }
+
+    .heatmap-cell.level-1 { background: #b2dfdb; }
+    .heatmap-cell.level-2 { background: #4db6ac; }
+    .heatmap-cell.level-3 { background: #26a69a; }
+    .heatmap-cell.level-4 { background: #00897b; }
+
+    .heatmap-legend {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 10px;
+      justify-content: flex-end;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .heatmap-swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 2px;
+    }
+
+    .heatmap-1 { background: #b2dfdb; }
+    .heatmap-2 { background: #4db6ac; }
+    .heatmap-3 { background: #26a69a; }
+    .heatmap-4 { background: #00897b; }
+
+    .streak-label {
+      float: right;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .recent-dictations {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .recent-item {
+      display: flex;
+      gap: 14px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-color);
+      align-items: baseline;
+    }
+
+    .recent-item:last-child {
+      border-bottom: none;
+    }
+
+    .recent-time {
+      font-size: 12px;
+      color: var(--text-muted);
+      min-width: 60px;
+      flex-shrink: 0;
+    }
+
+    .recent-text {
+      font-size: 13px;
+      color: var(--text-primary);
+      line-height: 1.4;
+      overflow-wrap: break-word;
+      word-break: break-word;
+      min-width: 0;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 700px) {
+      .sidebar {
+        width: 180px;
+        min-width: 180px;
+      }
+      .main {
+        padding: 24px 20px;
+      }
+      .stat-value {
+        font-size: 26px;
+      }
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+      .stats-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (min-width: 900px) {
+      .main {
+        padding: 36px 48px;
+      }
+      .stat-value {
+        font-size: 36px;
+      }
+      .stat-card {
+        padding: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <svg viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="7" fill="#2d8a6e"/>
+        <rect x="11" y="5" width="6" height="10" rx="3" fill="white"/>
+        <path d="M9 13a5 5 0 0010 0" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M14 18v4" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M11 22h6" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+      <span>Echo</span>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="nav-item active" data-tab="home">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 9l7-6 7 6"/>
+          <path d="M5 8.5V16a1 1 0 001 1h8a1 1 0 001-1V8.5"/>
+          <path d="M8.5 17v-4h3v4"/>
+        </svg>
+        Home
+      </div>
+      <div class="nav-item" data-tab="insights">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="10" width="3" height="7" rx="1"/>
+          <rect x="8.5" y="6" width="3" height="11" rx="1"/>
+          <rect x="14" y="3" width="3" height="14" rx="1"/>
+        </svg>
+        Insights
+      </div>
+      <div class="nav-item" data-tab="general">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 2a3 3 0 00-3 3v4a3 3 0 006 0V5a3 3 0 00-3-3z"/>
+          <path d="M5 9a5 5 0 0010 0"/>
+          <path d="M10 14v3M7 17h6"/>
+        </svg>
+        General
+      </div>
+      <div class="nav-item" data-tab="llm">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="5" width="12" height="10" rx="2"/>
+          <circle cx="7.5" cy="10" r="1"/>
+          <circle cx="12.5" cy="10" r="1"/>
+          <path d="M9 12.5h2"/>
+          <path d="M7.5 5V3.5M12.5 5V3.5M7.5 15v1.5M12.5 15v1.5"/>
+          <path d="M4 8H2.5M4 12H2.5M16 8h1.5M16 12h1.5"/>
+        </svg>
+        AI & Refinement
+      </div>
+      <div class="nav-item" data-tab="memory">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 2h10a1 1 0 011 1v15l-6-3.5L4 18V3a1 1 0 011-1z"/>
+        </svg>
+        Dictionary
+      </div>
+      <div class="nav-item" data-tab="project">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 5a1 1 0 011-1h4.5l2 2H17a1 1 0 011 1v9a1 1 0 01-1 1H3a1 1 0 01-1-1V5z"/>
+        </svg>
+        Project
+      </div>
+      <div class="nav-item" data-tab="history">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="10" cy="10" r="7.5"/>
+          <path d="M10 6v4.5l3 2"/>
+        </svg>
+        History
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="nav-item" id="copy-logs-btn">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h8v2H4zM4 8h12M4 11h12M4 14h8"/>
+        </svg>
+        <span>Copy Logs</span>
+        <span id="copy-logs-status" style="font-size:11px;color:var(--text-muted);margin-left:auto"></span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main content area -->
+  <main class="main">
+    <!-- Home -->
+    <div class="tab-content active" id="tab-home">
+      <h1 class="page-title" id="home-greeting">Welcome</h1>
+
+      <div class="card home-hero">
+        <div class="home-hero-icon">
+          <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/>
+            <path d="M5 9a5 5 0 0010 0"/>
+            <path d="M10 14v3.5M7.5 17.5h5"/>
+          </svg>
+        </div>
+        <div class="home-hero-text">
+          <div class="home-hero-title">Hold <kbd>fn</kbd> and speak</div>
+          <div class="home-hero-sub">or press <kbd id="home-hotkey">⌘⇧V</kbd> to toggle — Echo types the result at your cursor</div>
+        </div>
+        <span class="home-chip">
+          <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="9" width="12" height="8" rx="2"/><path d="M7 9V6.5a3 3 0 016 0V9"/></svg>
+          on-device
+        </span>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="home-total">—</div>
+          <div class="stat-label">TOTAL WORDS</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="home-wpm">—</div>
+          <div class="stat-label">WORDS PER MINUTE</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="home-streak">0d</div>
+          <div class="stat-label">CURRENT STREAK</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Recent Dictations</div>
+        <div id="home-recent" class="recent-dictations"></div>
+      </div>
+    </div>
+
+    <!-- Insights -->
+    <div class="tab-content" id="tab-insights">
+      <h1 class="page-title">Insights</h1>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-wpm">—</div>
+          <div class="stat-label">WORDS PER MINUTE</div>
+          <div class="stat-speedup" id="stat-wpm-speedup"></div>
+          <div class="stat-gauge" id="stat-wpm-gauge">
+            <div class="stat-gauge-fill" style="width:0%"></div>
+          </div>
+          <div class="stat-gauge-labels">
+            <span>Avg typing (40)</span>
+            <span id="stat-wpm-value-label">You</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-corrections">—</div>
+          <div class="stat-label">FIXES BY ECHO</div>
+          <div class="stat-detail" id="stat-corrections-detail"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-badge" id="stat-growth-badge"></div>
+          <div class="stat-value" id="stat-total-words">—</div>
+          <div class="stat-label">TOTAL WORDS DICTATED</div>
+        </div>
+      </div>
+
+      <div class="stats-row">
+        <div class="card stats-card-half">
+          <div class="card-title">App Usage</div>
+          <div id="stats-app-usage" class="app-usage-list"></div>
+        </div>
+        <div class="card stats-card-half">
+          <div class="card-title" style="display:flex;justify-content:space-between;align-items:baseline">
+            <span><span id="stats-streak-value">0</span> day streak</span>
+            <span class="streak-label" id="stats-streak-longest">LONGEST: 0</span>
+          </div>
+          <div class="streak-heatmap" id="stats-heatmap"></div>
+          <div class="heatmap-legend">
+            <span>Less</span>
+            <span class="heatmap-swatch heatmap-1"></span>
+            <span class="heatmap-swatch heatmap-2"></span>
+            <span class="heatmap-swatch heatmap-3"></span>
+            <span class="heatmap-swatch heatmap-4"></span>
+            <span>More</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Recent Dictations</div>
+        <div id="stats-recent-list" class="recent-dictations"></div>
+      </div>
+    </div>
+
+    <!-- General -->
+    <div class="tab-content" id="tab-general">
+      <h1 class="page-title">General</h1>
+
+      <div class="card">
+        <div class="card-title">Permissions</div>
+        <p class="card-description">Echo needs these macOS permissions to record your voice and type at your cursor. If something is missing, click the button beside it to jump straight to the right pane in System Settings.</p>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Microphone</span>
+            <small>Required to record your voice</small>
+          </div>
+          <div class="perm-action">
+            <span id="perm-mic" class="status">Checking…</span>
+            <button class="btn-secondary perm-fix" id="perm-fix-mic" style="display:none">Grant</button>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Accessibility</span>
+            <small>Lets Echo type text at your cursor</small>
+          </div>
+          <div class="perm-action">
+            <span id="perm-ax" class="status">Checking…</span>
+            <button class="btn-secondary perm-fix" id="perm-fix-ax" style="display:none">Open</button>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Input Monitoring</span>
+            <small>Required for the fn hotkey to trigger recording</small>
+          </div>
+          <div class="perm-action">
+            <span id="perm-input" class="status">Checking…</span>
+            <button class="btn-secondary perm-fix" id="perm-fix-input" style="display:none">Open</button>
+          </div>
+        </div>
+        <p class="card-description" id="perm-hint" style="margin:12px 0 0; display:none">After granting a permission, quit and reopen Echo for it to take effect. Tip: set Keyboard → “Press fn key to” → “Do Nothing”.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Recording</div>
+        <div class="form-group">
+          <label>Hotkey</label>
+          <input type="text" id="hotkey" placeholder="CommandOrControl+Shift+V" />
+        </div>
+        <div class="form-group">
+          <label>Recording Mode</label>
+          <select id="recordingMode">
+            <option value="toggle">Toggle (press to start, press again to stop)</option>
+            <option value="hold">Hold-to-talk (hold keys to record, release to stop)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Start Delay <span class="hint">Prevents accidental triggers, 0 = instant</span></label>
+          <input type="number" id="startDelay" min="0" max="2000" step="100" placeholder="0" />
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Behavior</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Launch at login</span>
+            <small>Start Echo when you log in to your Mac</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="openAtLogin" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Auto-stop on silence</span>
+            <small>Automatically stop recording after detecting silence</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="silenceDetection" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Noise reduction</span>
+            <small>Remove background noise from recordings before transcription</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="noiseReduction" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Whisper mode</span>
+            <small>Boost sensitivity for quiet or whispered speech</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="whisperMode" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Speech-to-Text Engine</div>
+        <div class="form-group">
+          <label>Engine</label>
+          <select id="sttEngine">
+            <option value="whisper">Whisper — on-device, free (recommended)</option>
+            <option value="macos">macOS Speech Recognition — on-device</option>
+            <option value="groq">Groq — cloud</option>
+            <option value="deepgram">Deepgram — cloud</option>
+            <option value="openai-whisper">OpenAI Whisper — cloud</option>
+          </select>
+        </div>
+
+        <div id="whisper-model-section" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <label style="margin:0;font-size:13px">Whisper Binary</label>
+            <span id="whisper-binary-badge" class="status">Checking...</span>
+            <button class="btn-secondary" id="build-binary-btn" style="display:none;font-size:11px;padding:4px 10px">Build</button>
+          </div>
+          <div id="build-status" style="font-size:12px;color:var(--text-muted);margin-bottom:10px;display:none"></div>
+          <div class="form-group">
+            <label>Whisper Model</label>
+            <div class="input-group">
+              <select id="whisperModelName"></select>
+              <button class="btn-primary" id="download-model-btn" style="display:none">Download</button>
+            </div>
+            <div id="model-download-status" class="validation-status"></div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Groq API Key</label>
+          <div class="input-group">
+            <input type="password" id="groqApiKey" placeholder="gsk_..." />
+            <button class="btn-secondary" id="validate-groq-btn">Validate</button>
+          </div>
+          <div id="groq-validation-status" class="validation-status"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Deepgram API Key</label>
+          <div class="input-group">
+            <input type="password" id="deepgramApiKey" placeholder="..." />
+            <button class="btn-secondary" id="validate-deepgram-btn">Validate</button>
+          </div>
+          <div id="deepgram-validation-status" class="validation-status"></div>
+        </div>
+
+        <div class="form-group">
+          <label>OpenAI API Key <span class="hint">For Whisper API + OpenAI refiner</span></label>
+          <div class="input-group">
+            <input type="password" id="openaiApiKey" placeholder="sk-..." />
+            <button class="btn-secondary" id="validate-openai-btn">Validate</button>
+          </div>
+          <div id="openai-validation-status" class="validation-status"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Transcription Language</label>
+          <select id="transcriptionLanguage">
+            <option value="en">English</option>
+            <option value="auto">Auto-detect</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="ja">Japanese</option>
+            <option value="zh">Chinese</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Audio Input Device <span class="hint">Leave empty for default</span></label>
+          <select id="audioDevice">
+            <option value="">System Default</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">LLM Provider</div>
+        <div class="form-group">
+          <select id="llmProvider">
+            <option value="claude-cli">Claude CLI (claude -p)</option>
+            <option value="codex-cli">Codex CLI</option>
+            <option value="claude-api">Claude API</option>
+            <option value="openai-api">OpenAI API</option>
+            <option value="groq">Groq API (fast — Llama)</option>
+            <option value="ollama">Ollama (local)</option>
+            <option value="llama-local">Llama.cpp (local)</option>
+            <option value="none">None (raw transcription only)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI & Refinement -->
+    <div class="tab-content" id="tab-llm">
+      <h1 class="page-title">AI & Refinement</h1>
+
+      <div class="card">
+        <div class="card-title">CLI Refiners</div>
+        <p class="card-description">Claude CLI and Codex CLI require no API keys — they use your existing CLI auth. Make sure <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">claude</code> or <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">codex</code> is installed and authenticated.</p>
+      </div>
+
+      <div class="card" id="ollama-settings">
+        <div class="card-title">Ollama</div>
+        <div class="form-group">
+          <label>Endpoint</label>
+          <input type="text" id="ollamaEndpoint" />
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="ollamaModel" />
+        </div>
+      </div>
+
+      <div class="card" id="api-refiner-settings">
+        <div class="card-title">API Refiners</div>
+        <p class="card-description">Claude API key is shared with vision context below. OpenAI API key is in General tab.</p>
+        <div class="form-group">
+          <label>Claude Model</label>
+          <input type="text" id="claudeApiModel" placeholder="claude-sonnet-4-20250514" />
+        </div>
+        <div class="form-group">
+          <label>OpenAI Model</label>
+          <input type="text" id="openaiApiModel" placeholder="gpt-4o-mini" />
+        </div>
+        <div class="form-group">
+          <label>Groq Model</label>
+          <input type="text" id="groqLlmModel" placeholder="llama-3.1-8b-instant" />
+          <p class="card-description">Reuses the Groq API key from the General tab. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.1-8b-instant</code> has the lowest latency.</p>
+        </div>
+      </div>
+
+      <div class="card" id="llama-settings">
+        <div class="card-title">Llama.cpp (Local)</div>
+        <div class="form-group">
+          <label>Endpoint</label>
+          <input type="text" id="llamaEndpoint" placeholder="http://localhost:8080" />
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="llamaModel" placeholder="llama-3.2-3b" />
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Features</div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Voice commands</span>
+            <small>Say "new line", "new paragraph", "scratch that", etc.</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="voiceCommandsEnabled" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Grammar validation</span>
+            <small>Runs a second LLM pass focused on grammar and spelling</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="grammarCheck" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Templates</div>
+        <p class="card-description">Trigger snippets by voice, e.g. "type my email signature".</p>
+        <div class="add-form" style="margin-bottom:14px">
+          <input type="text" id="tpl-name" placeholder="Name" />
+          <input type="text" id="tpl-trigger" placeholder="Trigger phrase" />
+          <input type="text" id="tpl-content" placeholder="Content to insert" style="flex:2" />
+          <button class="btn-primary" id="add-template-btn">Add</button>
+        </div>
+        <div id="template-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Refinement Prompt</div>
+        <div id="prompt-staleness-warning" class="warning-banner" style="display:none">
+          The default prompt has been updated since you customized yours. Clear your custom prompt to use the improved default, or keep yours as-is.
+        </div>
+        <p class="card-description">Override the default system prompt sent to the LLM. Leave blank to use the built-in prompt.</p>
+        <div class="form-group">
+          <textarea id="customPrompt" rows="6" placeholder="Leave blank to use default prompt..."></textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Vocabulary List</div>
+        <p class="card-description">High-priority terms injected into every refinement. One per line, or comma-separated.</p>
+        <div class="form-group">
+          <textarea id="vocabularyList" rows="4" placeholder="e.g. Echo, TypeScript, Electron, Claude..."></textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Deep Context</div>
+        <p class="card-description">Captures a screenshot of your active window and uses a vision LLM to understand what you're doing — dramatically improves transcription accuracy.</p>
+        <div class="toggle-row" style="margin-bottom:14px">
+          <div class="toggle-label">
+            <span>Window context</span>
+            <small>Enable screen analysis for better accuracy</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="useWindowContext" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>Context Provider</label>
+          <select id="contextProvider">
+            <option value="none">Metadata only (app name + window title)</option>
+            <option value="claude">Claude Vision (screenshot analysis)</option>
+            <option value="groq">Groq Vision (screenshot analysis)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Claude API Key <span class="hint">Required for Claude vision context</span></label>
+          <input type="password" id="claudeApiKey" placeholder="sk-ant-..." />
+        </div>
+      </div>
+
+      <div class="card" id="provider-health">
+        <div class="card-title">Provider Health</div>
+        <div id="provider-status-list" style="font-size:13px;color:var(--text-muted)">Checking...</div>
+      </div>
+    </div>
+
+    <!-- Dictionary / Memory -->
+    <div class="tab-content" id="tab-memory">
+      <h1 class="page-title">Dictionary</h1>
+
+      <div class="card">
+        <div class="card-title">Add Word</div>
+        <div class="add-form">
+          <input type="text" id="mem-term" placeholder="Term (e.g. Dash)" />
+          <input type="text" id="mem-context" placeholder="Context (e.g. a product name)" />
+          <input type="text" id="mem-misrec" placeholder="Common misrecognitions" />
+          <select id="mem-category" style="flex:0.6">
+            <option value="productName">Product</option>
+            <option value="personName">Person</option>
+            <option value="technicalTerm">Technical</option>
+            <option value="acronym">Acronym</option>
+            <option value="custom">Custom</option>
+          </select>
+          <button class="btn-primary" id="add-memory-btn">Add</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Your Words</div>
+        <div id="memory-list"></div>
+      </div>
+    </div>
+
+    <!-- Project -->
+    <div class="tab-content" id="tab-project">
+      <h1 class="page-title">Project Context</h1>
+
+      <div class="card">
+        <div class="card-title">Scan Codebase</div>
+        <p class="card-description">Scan a codebase to extract class names, function names, types, etc. These will be added to your vocabulary for accurate voice coding.</p>
+        <div class="form-group">
+          <label>Project Path</label>
+          <div class="input-group">
+            <input type="text" id="project-path" placeholder="/Users/you/projects/myapp" />
+            <button class="btn-secondary" id="browse-btn">Browse...</button>
+          </div>
+        </div>
+        <button class="btn-primary" id="scan-btn">Scan Project</button>
+        <div id="scan-status" class="validation-status" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">How It Works</div>
+        <p class="card-description" style="margin-bottom:0">
+          1. Claude scans your entire project directory<br>
+          2. Generates a context document with all terminology and naming conventions<br>
+          3. This context is injected into every transcription refinement<br>
+          4. Technical terms, class names, function names are recognized correctly
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Current Context</div>
+        <pre id="context-preview" class="context-preview" style="display:none"></pre>
+        <div id="context-empty" class="empty-state">No project context generated yet</div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="tab-content" id="tab-history">
+      <h1 class="page-title">History</h1>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="card-title" style="margin-bottom:0">Run Log</div>
+          <button class="btn-danger" id="clear-history-btn" style="font-size:12px">Clear All</button>
+        </div>
+        <div class="form-group">
+          <input type="text" id="history-search" placeholder="Search history..." />
+        </div>
+        <div id="history-list"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="tauri-bridge.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

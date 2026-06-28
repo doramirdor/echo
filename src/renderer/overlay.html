@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Echo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: transparent;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    .container {
+      position: fixed;
+      left: 50%;
+      bottom: 12px;
+      transform: translateX(-50%);
+      background: rgba(30, 30, 30, 0.92);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      border-radius: 20px;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .container.dragging {
+      cursor: grabbing;
+      opacity: 0.85;
+    }
+
+    /* === IDLE STATE: minimal bar === */
+    .container.idle {
+      width: 64px;
+      height: 24px;
+      padding: 0;
+      border-radius: 12px;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border-color: transparent;
+    }
+
+    .container.idle .idle-bar {
+      display: block;
+    }
+
+    .container.idle .dictate-label,
+    .container.idle .wave-canvas,
+    .container.idle .status,
+    .container.idle .dot,
+    .container.idle .hide-btn {
+      display: none;
+    }
+
+    /* The minimal bar handle */
+    .idle-bar {
+      display: none;
+      width: 40px;
+      height: 5px;
+      border-radius: 3px;
+      background: rgba(130,130,130,0.55);
+      transition: background 0.2s;
+    }
+
+    /* === HOVER STATE: show Dictate fn === */
+    .container.idle:hover {
+      width: 130px;
+      height: 32px;
+      border-radius: 16px;
+      background: rgba(30, 30, 30, 0.92);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      border-color: rgba(255,255,255,0.06);
+    }
+
+    .container.idle:hover .idle-bar {
+      display: none;
+    }
+
+    .container.idle:hover .dictate-label {
+      display: flex;
+    }
+
+    /* Dictate label with fn badge */
+    .dictate-label {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .dictate-icon {
+      width: 14px;
+      height: 14px;
+      fill: rgba(255,255,255,0.7);
+      flex-shrink: 0;
+    }
+
+    .dictate-text {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.75);
+      letter-spacing: -0.1px;
+    }
+
+    .fn-badge {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(255,160,200,0.9);
+      background: rgba(255,160,200,0.1);
+      padding: 1px 5px;
+      border-radius: 4px;
+      letter-spacing: 0.3px;
+    }
+
+    /* === RECORDING STATE: waveform === */
+    .container.recording {
+      width: 180px;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: 18px;
+      background: rgba(30, 30, 30, 0.94);
+    }
+
+    .container.recording .idle-bar,
+    .container.recording .dictate-label,
+    .container.recording .status,
+    .container.recording .hide-btn {
+      display: none;
+    }
+
+    .container.recording .dot {
+      display: block;
+    }
+
+    .container.recording .wave-canvas {
+      display: block;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.25);
+      flex-shrink: 0;
+      display: none;
+      margin-right: 10px;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    .container.recording .dot {
+      background: #FF3B30;
+      box-shadow: 0 0 8px rgba(255,59,48,0.5);
+      animation: pulse-dot 1.5s ease-in-out infinite;
+    }
+
+    .container.processing .dot {
+      display: block;
+      background: #FF9500;
+      animation: pulse-dot 1s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Waveform */
+    .wave-canvas {
+      height: 22px;
+      flex: 1;
+      display: none;
+    }
+
+    /* === PROCESSING STATE === */
+    .container.processing {
+      width: 130px;
+      height: 32px;
+      padding: 0 14px;
+      border-radius: 16px;
+    }
+
+    .container.processing .idle-bar,
+    .container.processing .dictate-label,
+    .container.processing .wave-canvas,
+    .container.processing .hide-btn {
+      display: none;
+    }
+
+    .container.processing .status {
+      display: block;
+    }
+
+    /* Status text */
+    .status {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      font-size: 11px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.50);
+      white-space: nowrap;
+      letter-spacing: -0.1px;
+      flex-shrink: 0;
+      display: none;
+    }
+
+    /* Live transcript (shown above the bar) */
+    .transcript {
+      display: none;
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-bottom: 6px;
+      background: rgba(22, 22, 22, 0.88);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.06);
+      padding: 8px 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      font-size: 12px;
+      line-height: 1.45;
+      color: rgba(255,255,255,0.8);
+      max-height: 80px;
+      max-width: 300px;
+      min-width: 120px;
+      overflow-y: auto;
+      word-wrap: break-word;
+      white-space: normal;
+    }
+    .transcript.visible { display: block; }
+    .transcript .low-confidence { color: #FF9500; text-decoration: underline dotted; }
+
+    /* Word count badge */
+    .word-count {
+      display: none;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      font-size: 10px;
+      color: rgba(255,255,255,0.4);
+      margin-left: 8px;
+    }
+    .container.recording .word-count { display: inline; }
+
+    /* Success flash */
+    .container.success {
+      width: 130px;
+      height: 32px;
+      border-radius: 16px;
+      background: rgba(48, 209, 88, 0.15);
+      border-color: rgba(48, 209, 88, 0.3);
+    }
+    .container.success .status { display: block; color: #30D158; }
+
+    /* Hide button (only on hover in processing state) */
+    .hide-btn {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.3);
+      font-size: 9px;
+      line-height: 14px;
+      text-align: center;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.2s, background 0.15s;
+      flex-shrink: 0;
+      padding: 0;
+      -webkit-app-region: no-drag;
+      display: none;
+      margin-left: 6px;
+    }
+    .container.processing:hover .hide-btn { display: block; opacity: 1; }
+    .hide-btn:hover {
+      background: rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.7);
+    }
+  </style>
+</head>
+<body>
+  <div class="container idle" id="container" role="status" aria-live="polite" aria-label="Echo dictation overlay">
+    <div class="idle-bar" id="idle-bar"></div>
+    <div class="dictate-label" id="dictate-label">
+      <svg class="dictate-icon" viewBox="0 0 24 24">
+        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+      </svg>
+      <span class="dictate-text">Dictate</span>
+      <span class="fn-badge">fn</span>
+    </div>
+    <div class="dot" id="dot"></div>
+    <span class="status" id="status"></span>
+    <span class="word-count" id="word-count"></span>
+    <canvas class="wave-canvas" id="canvas"></canvas>
+    <button class="hide-btn" id="hide-btn">&times;</button>
+    <div class="transcript" id="transcript"></div>
+  </div>
+
+  <script src="tauri-bridge.js"></script>
+  <script>
+    var api = window.echo;
+    var container = document.getElementById('container');
+    var canvas = document.getElementById('canvas');
+    var ctx = canvas.getContext('2d');
+    var statusEl = document.getElementById('status');
+    var transcriptEl = document.getElementById('transcript');
+    var wordCountEl = document.getElementById('word-count');
+
+    // Keyboard shortcuts: Esc to cancel
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' && isRecording) {
+        api.cancelRecording();
+      }
+    });
+
+    var isRecording = false;
+    var NUM_BARS = 28;
+    var waveData = [];
+    for (var i = 0; i < NUM_BARS; i++) waveData.push(0);
+    var currentLevel = 0;
+    var targetLevel = 0;
+    var animId = null;
+    var waveTime = 0;
+    var barVelocities = [];
+    var barTargets = [];
+    for (var i = 0; i < NUM_BARS; i++) { barVelocities.push(0); barTargets.push(0); }
+
+    var hideBtn = document.getElementById('hide-btn');
+    var isDragging = false;
+    var hasDragged = false;
+    var dragStartX = 0;
+    var dragStartY = 0;
+    var DRAG_THRESHOLD = 5;
+
+    container.addEventListener('mouseenter', function() {
+      api.overlayMouseEnter();
+    });
+    container.addEventListener('mouseleave', function() {
+      if (!isDragging) api.overlayMouseLeave();
+    });
+
+    hideBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      api.toggleOverlay();
+    });
+
+    // Drag
+    container.addEventListener('mousedown', function(e) {
+      if (e.target === hideBtn) return;
+      dragStartX = e.screenX;
+      dragStartY = e.screenY;
+      hasDragged = false;
+      isDragging = true;
+      api.overlayDragStart();
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!isDragging) return;
+      var dx = e.screenX - dragStartX;
+      var dy = e.screenY - dragStartY;
+      if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+        hasDragged = true;
+        container.classList.add('dragging');
+        api.overlayDragMove(dx, dy);
+      }
+    });
+    document.addEventListener('mouseup', function() {
+      if (isDragging) {
+        isDragging = false;
+        container.classList.remove('dragging');
+      }
+    });
+
+    // Click to toggle
+    container.addEventListener('click', function(e) {
+      if (e.target === hideBtn) return;
+      if (hasDragged) { hasDragged = false; return; }
+      if (!container.classList.contains('processing')) api.toggle();
+    });
+
+    api.onAudioLevel(function(level) {
+      if (isRecording) targetLevel = Math.min(1, level * 2.5);
+    });
+
+    api.onLiveTranscript(function(text) {
+      if (isRecording && transcriptEl) {
+        transcriptEl.textContent = text;
+        transcriptEl.classList.toggle('visible', !!text.trim());
+        if (wordCountEl) {
+          var words = text.trim() ? text.trim().split(/\s+/).length : 0;
+          wordCountEl.textContent = words + 'w';
+        }
+      }
+    });
+
+    function escapeHtml(str) {
+      var d = document.createElement('div');
+      d.textContent = str == null ? '' : String(str);
+      return d.innerHTML;
+    }
+    api.onConfidenceSegments(function(segments) {
+      if (!transcriptEl || !segments.length) return;
+      var html = segments.map(function(s) {
+        if (s.confidence < 0.7) {
+          return '<span class="low-confidence" title="Low confidence: ' + Math.round(s.confidence * 100) + '%">' + escapeHtml(s.text) + '</span>';
+        }
+        return escapeHtml(s.text);
+      }).join(' ');
+      transcriptEl.innerHTML = html;
+      transcriptEl.classList.add('visible');
+    });
+
+    function drawWave() {
+      currentLevel += (targetLevel - currentLevel) * 0.3;
+      waveTime += 0.12;
+
+      var dpr = window.devicePixelRatio || 1;
+      var w = canvas.clientWidth;
+      var h = canvas.clientHeight;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      var barW = w / NUM_BARS;
+      var cy = h / 2;
+      var level = currentLevel;
+
+      for (var i = 0; i < NUM_BARS; i++) {
+        var centerDist = 1 - Math.abs(i - NUM_BARS / 2) / (NUM_BARS / 2);
+        var envelope = 0.4 + 0.6 * centerDist * centerDist;
+
+        var wave1 = Math.sin(waveTime * 2.3 + i * 0.45) * 0.35;
+        var wave2 = Math.sin(waveTime * 3.7 + i * 0.7) * 0.25;
+        var wave3 = Math.sin(waveTime * 1.1 + i * 1.2) * 0.2;
+        var combined = (wave1 + wave2 + wave3 + 1) * 0.5;
+
+        barTargets[i] = level * envelope * (0.3 + combined * 0.7);
+
+        var spring = 0.18 + Math.random() * 0.06;
+        var damping = 0.72;
+        barVelocities[i] = barVelocities[i] * damping + (barTargets[i] - waveData[i]) * spring;
+        waveData[i] += barVelocities[i];
+        waveData[i] = Math.max(0, Math.min(1, waveData[i]));
+
+        var v = waveData[i];
+        var barH = Math.max(2, v * (h * 0.85));
+        var x = i * barW;
+        var alpha = 0.25 + v * 0.75;
+
+        ctx.fillStyle = 'rgba(100, 140, 255, ' + alpha + ')';
+        ctx.beginPath();
+        ctx.roundRect(x + 0.5, cy - barH / 2, barW - 1, barH, barW / 2);
+        ctx.fill();
+      }
+
+      if (isRecording) animId = requestAnimationFrame(drawWave);
+    }
+
+    function startRecording() {
+      isRecording = true;
+      currentLevel = 0;
+      targetLevel = 0;
+      waveTime = 0;
+      for (var i = 0; i < NUM_BARS; i++) { waveData[i] = 0; barVelocities[i] = 0; barTargets[i] = 0; }
+      transcriptEl.textContent = '';
+      transcriptEl.classList.remove('visible');
+      container.className = 'container recording';
+      requestAnimationFrame(function() {
+        requestAnimationFrame(drawWave);
+      });
+    }
+
+    function stopRecording() {
+      isRecording = false;
+      if (animId) { cancelAnimationFrame(animId); animId = null; }
+      transcriptEl.classList.remove('visible');
+    }
+
+    api.onStateChange(function(state, data) {
+      switch (state) {
+        case 'idle':
+          stopRecording();
+          if (data && data.lastResult) {
+            container.className = 'container success';
+            statusEl.textContent = 'Done';
+            setTimeout(function() {
+              container.className = 'container idle';
+              statusEl.textContent = '';
+            }, 1200);
+          } else {
+            container.className = 'container idle';
+            statusEl.textContent = '';
+          }
+          if (wordCountEl) wordCountEl.textContent = '';
+          break;
+        case 'recording':
+          startRecording();
+          break;
+        case 'transcribing':
+          stopRecording();
+          container.className = 'container processing';
+          statusEl.textContent = 'Transcribing\u2026';
+          break;
+        case 'refining':
+          container.className = 'container processing';
+          statusEl.textContent = 'Refining\u2026';
+          break;
+        case 'inserting':
+          container.className = 'container processing';
+          statusEl.textContent = 'Inserting\u2026';
+          break;
+        case 'error':
+          stopRecording();
+          container.className = 'container processing';
+          statusEl.textContent = data && data.error ? data.error.substring(0, 40) : 'Error';
+          setTimeout(function() {
+            container.className = 'container idle';
+            statusEl.textContent = '';
+          }, 3000);
+          break;
+      }
+    });
+  </script>
+</body>
+</html>

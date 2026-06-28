@@ -1,0 +1,110 @@
+{
+  "name": "echo",
+  "version": "0.1.0",
+  "description": "Voice-to-text tool for macOS with LLM refinement",
+  "scripts": {
+    "start": "npm run electron:start",
+    "tauri": "cargo tauri",
+    "dev": "npm run electron:start",
+    "build": "cargo tauri build",
+    "setup": "bash scripts/setup-whisper.sh",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/ tests/",
+    "electron:build": "tsc && mkdir -p dist/renderer && cp src/renderer/*.html src/renderer/*.js dist/renderer/",
+    "electron:start": "npm run electron:build && electron .",
+    "electron:pack": "electron-builder --dir",
+    "electron:dist": "electron-builder"
+  },
+  "keywords": [
+    "voice",
+    "transcription",
+    "speech-to-text",
+    "dictation",
+    "macos",
+    "whisper",
+    "menu-bar",
+    "privacy",
+    "local-first"
+  ],
+  "author": "Dor Amir <amirdor@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://doramirdor.github.io/echo/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/doramirdor/echo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/doramirdor/echo/issues"
+  },
+  "main": "dist/main/index.js",
+  "type": "commonjs",
+  "build": {
+    "appId": "com.echo.app",
+    "productName": "Echo",
+    "publish": {
+      "provider": "github",
+      "owner": "doramirdor",
+      "repo": "echo"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Echo needs microphone access to record your voice for transcription.",
+        "NSSpeechRecognitionUsageDescription": "Echo uses speech recognition to provide real-time transcription.",
+        "LSUIElement": true
+      }
+    },
+    "dmg": {
+      "title": "Echo",
+      "iconSize": 80,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/tray",
+        "to": "assets/tray"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "@tauri-apps/cli": "^2.11.3",
+    "@typescript-eslint/eslint-plugin": "^8.32.0",
+    "@typescript-eslint/parser": "^8.32.0",
+    "electron": "^41.1.0",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.27.0",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.32.0",
+    "vitest": "^3.2.3"
+  }
+}

@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+*.tsbuildinfo
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# Packaged apps
+*.app
+*.dmg
+*.zip
+release/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Whisper artifacts (built/downloaded at runtime)
+whisper.cpp/
+models/
+*.bin
+
+# Local tooling / agent artifacts (not part of the project)
+.claude/
+.openbar/

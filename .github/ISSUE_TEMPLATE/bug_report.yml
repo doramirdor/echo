@@ -1,0 +1,68 @@
+name: Bug report
+description: Report something that isn't working the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill out the sections below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I press the hotkey and speak, ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Echo
+        2. Press ⌘⇧V
+        3. Say "..."
+        4. See ...
+    validations:
+      required: true
+  - type: dropdown
+    id: stt
+    attributes:
+      label: STT engine
+      options:
+        - Local Whisper (whisper.cpp)
+        - Groq
+        - macOS Speech
+        - Deepgram
+        - OpenAI Whisper
+    validations:
+      required: false
+  - type: dropdown
+    id: llm
+    attributes:
+      label: LLM provider
+      options:
+        - None
+        - Claude CLI
+        - Codex CLI
+        - Claude API
+        - OpenAI API
+        - Ollama
+        - Llama.cpp
+    validations:
+      required: false
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g. 15.5 (Sequoia)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Settings → General → Copy Logs, then paste here. Remove anything sensitive."
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,42 @@
+{
+  "productName": "Echo",
+  "version": "0.1.0",
+  "identifier": "com.echo.app",
+  "build": {
+    "frontendDist": "../src/renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/tray-icon.png",
+      "iconAsTemplate": true
+    },
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "../entitlements.mac.plist",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "frameworks": []
+    },
+    "resources": [
+      "../assets/tray/*",
+      "../scripts/*.swift"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Voice-to-text with LLM refinement",
+    "longDescription": "Voice dictation tool for macOS that uses Whisper for transcription and LLMs for text refinement"
+  }
+}
