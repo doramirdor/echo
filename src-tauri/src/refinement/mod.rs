@@ -2,6 +2,8 @@ pub mod refiner;
 pub mod cli;
 pub mod claude;
 pub mod openai;
+pub mod gemini;
+pub mod bedrock;
 pub mod groq;
 pub mod ollama;
 pub mod llama;
@@ -44,6 +46,18 @@ pub async fn refine(
             let key = settings.get(|s| s.groq_api_key.clone());
             let model = settings.get(|s| s.groq_llm_model.clone());
             groq::refine(&key, &model, raw, &system_prompt).await
+        }
+        "gemini" => {
+            let key = settings.get(|s| s.gemini_api_key.clone());
+            let model = settings.get(|s| s.gemini_model.clone());
+            gemini::refine(&key, &model, raw, &system_prompt).await
+        }
+        "bedrock" => {
+            let access = settings.get(|s| s.bedrock_access_key_id.clone());
+            let secret = settings.get(|s| s.bedrock_secret_access_key.clone());
+            let region = settings.get(|s| s.bedrock_region.clone());
+            let model = settings.get(|s| s.bedrock_model.clone());
+            bedrock::refine(&access, &secret, &region, &model, raw, &system_prompt).await
         }
         "ollama" => {
             let endpoint = settings.get(|s| s.ollama_endpoint.clone());

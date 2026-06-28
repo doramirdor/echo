@@ -1,6 +1,6 @@
 import Store from 'electron-store';
 
-export type LLMProvider = 'claude-cli' | 'codex-cli' | 'claude-api' | 'openai-api' | 'groq' | 'ollama' | 'llama-local' | 'none';
+export type LLMProvider = 'claude-cli' | 'codex-cli' | 'claude-api' | 'openai-api' | 'gemini' | 'bedrock' | 'groq' | 'ollama' | 'llama-local' | 'none';
 export type STTEngine = 'groq' | 'macos' | 'whisper' | 'deepgram' | 'openai-whisper';
 
 export type ContextProvider = 'claude' | 'groq' | 'none';
@@ -19,6 +19,12 @@ export interface EchoSettings {
   claudeApiKey: string;
   claudeApiModel: string;
   openaiApiModel: string;
+  geminiApiKey: string;
+  geminiModel: string;
+  bedrockAccessKeyId: string;
+  bedrockSecretAccessKey: string;
+  bedrockRegion: string;
+  bedrockModel: string;
   groqLlmModel: string;
   ollamaEndpoint: string;
   ollamaModel: string;
@@ -64,6 +70,12 @@ const defaults: EchoSettings = {
   claudeApiKey: '',
   claudeApiModel: 'claude-sonnet-4-20250514',
   openaiApiModel: 'gpt-4o-mini',
+  geminiApiKey: '',
+  geminiModel: 'gemini-2.0-flash',
+  bedrockAccessKeyId: '',
+  bedrockSecretAccessKey: '',
+  bedrockRegion: 'us-east-1',
+  bedrockModel: 'anthropic.claude-3-5-haiku-20241022-v1:0',
   groqLlmModel: 'llama-3.1-8b-instant',
   ollamaEndpoint: 'http://localhost:11434',
   ollamaModel: 'llama3.2',

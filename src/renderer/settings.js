@@ -54,6 +54,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (openaiApiModel) openaiApiModel.value = s.openaiApiModel || '';
     const groqLlmModel = document.getElementById('groqLlmModel');
     if (groqLlmModel) groqLlmModel.value = s.groqLlmModel || 'llama-3.1-8b-instant';
+    const geminiApiKey = document.getElementById('geminiApiKey');
+    if (geminiApiKey) geminiApiKey.value = s.geminiApiKey || '';
+    const geminiModel = document.getElementById('geminiModel');
+    if (geminiModel) geminiModel.value = s.geminiModel || 'gemini-2.0-flash';
+    const bedrockAccessKeyId = document.getElementById('bedrockAccessKeyId');
+    if (bedrockAccessKeyId) bedrockAccessKeyId.value = s.bedrockAccessKeyId || '';
+    const bedrockSecretAccessKey = document.getElementById('bedrockSecretAccessKey');
+    if (bedrockSecretAccessKey) bedrockSecretAccessKey.value = s.bedrockSecretAccessKey || '';
+    const bedrockRegion = document.getElementById('bedrockRegion');
+    if (bedrockRegion) bedrockRegion.value = s.bedrockRegion || 'us-east-1';
+    const bedrockModel = document.getElementById('bedrockModel');
+    if (bedrockModel) bedrockModel.value = s.bedrockModel || 'anthropic.claude-3-5-haiku-20241022-v1:0';
     const llamaEndpoint = document.getElementById('llamaEndpoint');
     if (llamaEndpoint) llamaEndpoint.value = s.llamaEndpoint || 'http://localhost:8080';
     const llamaModel = document.getElementById('llamaModel');
@@ -71,7 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Auto-save on change
-  ['hotkey', 'recordingMode', 'startDelay', 'llmProvider', 'ollamaEndpoint', 'ollamaModel', 'customPrompt', 'vocabularyList', 'contextProvider', 'claudeApiKey', 'sttEngine', 'groqApiKey', 'audioDevice', 'deepgramApiKey', 'openaiApiKey', 'transcriptionLanguage', 'claudeApiModel', 'openaiApiModel', 'groqLlmModel', 'llamaEndpoint', 'llamaModel'].forEach(id => {
+  ['hotkey', 'recordingMode', 'startDelay', 'llmProvider', 'ollamaEndpoint', 'ollamaModel', 'customPrompt', 'vocabularyList', 'contextProvider', 'claudeApiKey', 'sttEngine', 'groqApiKey', 'audioDevice', 'deepgramApiKey', 'openaiApiKey', 'transcriptionLanguage', 'claudeApiModel', 'openaiApiModel', 'groqLlmModel', 'geminiApiKey', 'geminiModel', 'bedrockAccessKeyId', 'bedrockSecretAccessKey', 'bedrockRegion', 'bedrockModel', 'llamaEndpoint', 'llamaModel'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', () => {

@@ -13,6 +13,8 @@ import { CLIRefiner } from './refinement/cliRefiner';
 import { OllamaRefiner } from './refinement/ollamaRefiner';
 import { ClaudeRefiner } from './refinement/claudeRefiner';
 import { OpenAIRefiner } from './refinement/openaiRefiner';
+import { GeminiRefiner } from './refinement/geminiRefiner';
+import { BedrockRefiner } from './refinement/bedrockRefiner';
 import { GroqRefiner } from './refinement/groqRefiner';
 import { LlamaLocalRefiner } from './refinement/llamaRefiner';
 import { LLMRefiner, sanitizeRefinedOutput, GRAMMAR_VALIDATION_PROMPT } from './refinement/refiner';
@@ -51,6 +53,17 @@ function createRefiner(): LLMRefiner | null {
       const key = getSetting('groqApiKey');
       if (!key) throw new Error('Groq API key not configured');
       return new GroqRefiner(key, getSetting('groqLlmModel'));
+    }
+    case 'gemini': {
+      const key = getSetting('geminiApiKey');
+      if (!key) throw new Error('Gemini API key not configured');
+      return new GeminiRefiner(key, getSetting('geminiModel'));
+    }
+    case 'bedrock': {
+      const accessKeyId = getSetting('bedrockAccessKeyId');
+      const secretAccessKey = getSetting('bedrockSecretAccessKey');
+      if (!accessKeyId || !secretAccessKey) throw new Error('AWS credentials for Bedrock not configured');
+      return new BedrockRefiner(accessKeyId, secretAccessKey, getSetting('bedrockRegion'), getSetting('bedrockModel'));
     }
     case 'ollama':
       return new OllamaRefiner(getSetting('ollamaEndpoint'), getSetting('ollamaModel'));

@@ -1300,10 +1300,12 @@
           <select id="llmProvider">
             <option value="claude-cli">Claude CLI (claude -p)</option>
             <option value="codex-cli">Codex CLI</option>
-            <option value="claude-api">Claude API</option>
             <option value="openai-api">OpenAI API</option>
-            <option value="groq">Groq API (fast — Llama)</option>
+            <option value="claude-api">Anthropic API (Claude)</option>
+            <option value="gemini">Google Gemini API</option>
+            <option value="bedrock">AWS Bedrock</option>
             <option value="ollama">Ollama (local)</option>
+            <option value="groq">Groq API (fast — Llama)</option>
             <option value="llama-local">Llama.cpp (local)</option>
             <option value="none">None (raw transcription only)</option>
           </select>
@@ -1347,6 +1349,39 @@
           <label>Groq Model</label>
           <input type="text" id="groqLlmModel" placeholder="llama-3.1-8b-instant" />
           <p class="card-description">Reuses the Groq API key from the General tab. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.1-8b-instant</code> has the lowest latency.</p>
+        </div>
+      </div>
+
+      <div class="card" id="gemini-settings">
+        <div class="card-title">Google Gemini</div>
+        <div class="form-group">
+          <label>Gemini API Key</label>
+          <input type="password" id="geminiApiKey" placeholder="AIza..." />
+        </div>
+        <div class="form-group">
+          <label>Gemini Model</label>
+          <input type="text" id="geminiModel" placeholder="gemini-2.0-flash" />
+        </div>
+      </div>
+
+      <div class="card" id="bedrock-settings">
+        <div class="card-title">AWS Bedrock</div>
+        <p class="card-description">Static IAM credentials, signed with SigV4. Assumes an Anthropic Claude model on Bedrock.</p>
+        <div class="form-group">
+          <label>Access Key ID</label>
+          <input type="password" id="bedrockAccessKeyId" placeholder="AKIA..." />
+        </div>
+        <div class="form-group">
+          <label>Secret Access Key</label>
+          <input type="password" id="bedrockSecretAccessKey" placeholder="..." />
+        </div>
+        <div class="form-group">
+          <label>Region</label>
+          <input type="text" id="bedrockRegion" placeholder="us-east-1" />
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="bedrockModel" placeholder="anthropic.claude-3-5-haiku-20241022-v1:0" />
         </div>
       </div>
 
