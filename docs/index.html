@@ -70,24 +70,24 @@
         </div>
         <p class="hero__fineprint">Requires macOS · MIT licensed · No sign-up</p>
 
-        <!-- Product visual: before/after transformation -->
+        <!-- Product visual: live before/after transformation (animated) -->
         <div class="demo reveal" id="demo">
           <div class="demo__pill" aria-hidden="true">
-            <span class="demo__rec"></span>
+            <span class="demo__rec" id="demoRec"></span>
             <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-            <span class="demo__pilltext">Listening…</span>
+            <span class="demo__pilltext" id="demoStatus">Listening…</span>
           </div>
           <div class="demo__cards">
-            <figure class="demo__card demo__card--before">
+            <figure class="demo__card demo__card--before" id="demoCardBefore">
               <figcaption><span class="tag">You say</span></figcaption>
-              <p>um so like can you send the the report to sarah by uh end of day and lemme know if the api keys are still valid thanks</p>
+              <p id="demoBefore">um so like can you send the the report to sarah by uh end of day and lemme know if the api keys are still valid thanks</p>
             </figure>
-            <div class="demo__arrow" aria-hidden="true">
+            <div class="demo__arrow" id="demoArrow" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
             </div>
-            <figure class="demo__card demo__card--after">
+            <figure class="demo__card demo__card--after" id="demoCardAfter">
               <figcaption><span class="tag tag--accent">Echo types</span></figcaption>
-              <p>Can you send the report to Sarah by end of day? And let me know if the API keys are still valid. Thanks!</p>
+              <p id="demoAfter">Can you send the report to Sarah by end of day? And let me know if the API keys are still valid. Thanks!</p>
             </figure>
           </div>
         </div>
@@ -97,15 +97,15 @@
     <!-- ===== STATS / TRUST BAR ===== -->
     <section class="stats container">
       <div class="stat reveal">
-        <span class="stat__num">~3×</span>
-        <span class="stat__label">faster than typing</span>
+        <span class="stat__num"><span data-count="200" data-suffix="">200</span></span>
+        <span class="stat__label">words/min, spoken</span>
       </div>
       <div class="stat reveal">
         <span class="stat__num">$0</span>
         <span class="stat__label">free, forever</span>
       </div>
       <div class="stat reveal">
-        <span class="stat__num">100%</span>
+        <span class="stat__num"><span data-count="100" data-suffix="%">100%</span></span>
         <span class="stat__label">runs on your Mac</span>
       </div>
       <div class="stat reveal">
@@ -122,11 +122,20 @@
         Echo types into whatever window is focused — your editor, your inbox, your chat,
         your docs. If you can type there, you can talk there.
       </p>
-      <ul class="chips" aria-label="Example apps">
-        <li>Slack</li><li>VS Code</li><li>Mail</li><li>Notion</li>
-        <li>Google Docs</li><li>Messages</li><li>Terminal</li><li>Linear</li>
-        <li>Figma</li><li>ChatGPT</li><li>Safari</li><li>Notes</li>
-      </ul>
+      <div class="marquee" aria-label="Example apps">
+        <div class="marquee__track">
+          <ul class="chips">
+            <li>Slack</li><li>VS Code</li><li>Mail</li><li>Notion</li>
+            <li>Google Docs</li><li>Messages</li><li>Terminal</li><li>Linear</li>
+            <li>Figma</li><li>ChatGPT</li><li>Safari</li><li>Notes</li>
+          </ul>
+          <ul class="chips" aria-hidden="true">
+            <li>Slack</li><li>VS Code</li><li>Mail</li><li>Notion</li>
+            <li>Google Docs</li><li>Messages</li><li>Terminal</li><li>Linear</li>
+            <li>Figma</li><li>ChatGPT</li><li>Safari</li><li>Notes</li>
+          </ul>
+        </div>
+      </div>
     </section>
 
     <!-- ===== FEATURES ===== -->
