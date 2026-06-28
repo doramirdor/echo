@@ -8,24 +8,24 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg-body: #faf8f5;
+      --bg-body: #f6f5fd;
       --bg-sidebar: #ffffff;
       --bg-card: #ffffff;
-      --bg-input: #f5f3f0;
-      --border-color: #e8e4df;
-      --text-primary: #1a1a1a;
-      --text-secondary: #6b6560;
-      --text-muted: #9c9590;
-      --accent: #2d8a6e;
-      --accent-hover: #247358;
-      --accent-light: #e8f5f0;
-      --danger: #d94040;
+      --bg-input: #f1f0f9;
+      --border-color: #e7e5f3;
+      --text-primary: #1a1730;
+      --text-secondary: #5a5570;
+      --text-muted: #8e89a6;
+      --accent: #6c5ce7;
+      --accent-hover: #5544d4;
+      --accent-light: #efedfd;
+      --danger: #e0556b;
       --warning: #d98f00;
-      --success: #2d8a6e;
-      --radius: 10px;
-      --radius-sm: 6px;
-      --shadow-card: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
-      --shadow-hover: 0 4px 12px rgba(0,0,0,0.06);
+      --success: #22c55e;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow-card: 0 1px 3px rgba(36,27,84,0.05), 0 1px 2px rgba(36,27,84,0.04);
+      --shadow-hover: 0 8px 22px rgba(76,60,160,0.10);
       --transition: 0.2s ease;
     }
 
@@ -829,10 +829,10 @@
       flex-shrink: 0;
     }
 
-    .heatmap-cell.level-1 { background: #b2dfdb; }
-    .heatmap-cell.level-2 { background: #4db6ac; }
-    .heatmap-cell.level-3 { background: #26a69a; }
-    .heatmap-cell.level-4 { background: #00897b; }
+    .heatmap-cell.level-1 { background: #ded9fb; }
+    .heatmap-cell.level-2 { background: #b3a6f3; }
+    .heatmap-cell.level-3 { background: #8b7ff0; }
+    .heatmap-cell.level-4 { background: #6c5ce7; }
 
     .heatmap-legend {
       display: flex;
@@ -850,10 +850,10 @@
       border-radius: 2px;
     }
 
-    .heatmap-1 { background: #b2dfdb; }
-    .heatmap-2 { background: #4db6ac; }
-    .heatmap-3 { background: #26a69a; }
-    .heatmap-4 { background: #00897b; }
+    .heatmap-1 { background: #ded9fb; }
+    .heatmap-2 { background: #b3a6f3; }
+    .heatmap-3 { background: #8b7ff0; }
+    .heatmap-4 { background: #6c5ce7; }
 
     .streak-label {
       float: right;
@@ -934,11 +934,12 @@
   <nav class="sidebar">
     <div class="sidebar-brand">
       <svg viewBox="0 0 28 28" fill="none">
-        <rect width="28" height="28" rx="7" fill="#2d8a6e"/>
-        <rect x="11" y="5" width="6" height="10" rx="3" fill="white"/>
-        <path d="M9 13a5 5 0 0010 0" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
-        <path d="M14 18v4" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
-        <path d="M11 22h6" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+        <rect width="28" height="28" rx="8" fill="#6c5ce7"/>
+        <rect x="4.5"  y="11"  width="2.8" height="6"  rx="1.4" fill="white"/>
+        <rect x="9"    y="8"   width="2.8" height="12" rx="1.4" fill="white"/>
+        <rect x="13.5" y="5"   width="2.8" height="18" rx="1.4" fill="white"/>
+        <rect x="18"   y="8.5" width="2.8" height="11" rx="1.4" fill="white"/>
+        <rect x="22.5" y="11"  width="2.8" height="6"  rx="1.4" fill="white"/>
       </svg>
       <span>Echo</span>
     </div>
