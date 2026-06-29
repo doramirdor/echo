@@ -38,7 +38,7 @@ pub fn is_ready(model_name: &str) -> (bool, bool) {
     (binary_path().exists(), model_path(model_name).exists())
 }
 
-pub fn transcribe(wav_path: &Path, model_name: &str) -> Result<String, String> {
+pub fn transcribe(wav_path: &Path, model_name: &str, language: &str, prompt: &str) -> Result<String, String> {
     let bin = binary_path();
     let model = model_path(model_name);
 
@@ -49,14 +49,26 @@ pub fn transcribe(wav_path: &Path, model_name: &str) -> Result<String, String> {
         return Err(format!("Whisper model not found at {:?}. Download it in Settings.", model));
     }
 
+    let lang = if language.is_empty() { "en" } else { language };
+    // Run multi-threaded for a multi-core speedup (mirrors whisperService.ts:
+    // threads = max(1, cpus - 1), leaving a core for the UI).
+    let threads = std::cmp::max(1, num_cpus().saturating_sub(1)).to_string();
+    let mut args: Vec<&str> = vec![
+        "-m", model.to_str().unwrap_or(""),
+        "-f", wav_path.to_str().unwrap_or(""),
+        "--no-timestamps",
+        "-nt",
+        "-t", threads.as_str(),
+        "-l", lang,
+    ];
+    // Bias decoding toward the user's vocabulary/jargon (whisper.cpp `--prompt`).
+    if !prompt.is_empty() {
+        args.push("--prompt");
+        args.push(prompt);
+    }
+
     let output = Command::new(bin.to_str().unwrap_or(""))
-        .args([
-            "-m", model.to_str().unwrap_or(""),
-            "-f", wav_path.to_str().unwrap_or(""),
-            "--no-timestamps",
-            "-nt",
-            "-l", "en",
-        ])
+        .args(&args)
         .output()
         .map_err(|e| format!("Whisper transcription failed: {}", e))?;
 
@@ -102,27 +114,40 @@ pub async fn download_model(
     log::info!("[whisper] Downloading from {}...", url);
 
     let client = reqwest::Client::new();
-    let response = client.get(&url)
+    let mut response = client.get(&url)
         .send()
         .await
         .map_err(|e| format!("Download failed: {}", e))?;
 
+    if !response.status().is_success() {
+        return Err(format!("Download failed: HTTP {}", response.status()));
+    }
+
     let total = response.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
+    let mut last_percent: u32 = 0;
 
     let tmp_path = model.with_extension("bin.tmp");
     let mut file = fs::File::create(&tmp_path).map_err(|e| format!("Create file: {}", e))?;
 
-    let bytes = response.bytes()
-        .await
-        .map_err(|e| format!("Read failed: {}", e))?;
-
     use std::io::Write;
-    file.write_all(&bytes).map_err(|e| format!("Write failed: {}", e))?;
+    // Stream the body to disk so large models don't buffer in memory and the
+    // UI gets incremental download-progress updates.
+    while let Some(chunk) = response.chunk().await.map_err(|e| format!("Read failed: {}", e))? {
+        file.write_all(&chunk).map_err(|e| format!("Write failed: {}", e))?;
+        downloaded += chunk.len() as u64;
+        if total > 0 {
+            let percent = ((downloaded * 100) / total).min(100) as u32;
+            if percent != last_percent {
+                last_percent = percent;
+                progress_cb(percent);
+            }
+        }
+    }
     progress_cb(100);
 
     fs::rename(&tmp_path, &model).map_err(|e| format!("Rename failed: {}", e))?;
-    log::info!("[whisper] Model downloaded to {:?}", model);
+    log::info!("[whisper] Model downloaded to {:?} ({} bytes)", model, downloaded);
     Ok(())
 }
 

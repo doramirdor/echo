@@ -3,16 +3,22 @@ import { MemoryEntry } from '../memory/memoryEntry';
 // Track when the default prompt was last updated so we can warn users with custom prompts
 export const DEFAULT_PROMPT_VERSION = '2026-06-27';
 
+// What kind of content the speaker is dictating. Drives optional auto-formatting
+// (Wispr-style "formats lists, paragraphs, emails based on what you're saying").
+export type ContentType = 'list' | 'email' | 'paragraph' | 'default';
+
 export interface RefinementContext {
   memoryEntries: MemoryEntry[];
   memoryFormatted: string;
   windowContext?: string;
   vocabularyList?: string;
   customPrompt?: string;
+  appProfilePrompt?: string;        // per-app hint, ADDED to (not replacing) the base prompt
   existingFieldText?: string;       // text immediately before the caret
   existingFieldTextAfter?: string;  // text immediately after the caret
   projectContext?: string;          // scanned codebase terminology
   tone?: 'casual' | 'formal';
+  contentType?: ContentType;        // detected content type for auto-formatting
 }
 
 export interface LLMRefiner {
@@ -25,6 +31,7 @@ Rules:
 - Fix misrecognized words, especially proper nouns and technical terms
 - Fix punctuation and capitalization
 - Remove filler words (um, uh, like, you know) unless they are clearly intentional
+- Remove stutters, repeated words, and false starts (e.g. "I I want" → "I want", "the the document" → "the document", "we should we should go" → "we should go")
 - Preserve the speaker's own voice: keep their dialect, regional/British vs American spelling, idioms, and natural word choices. Do NOT standardize or "Americanize" their phrasing
 - Do NOT add, remove, or rephrase content beyond these fixes
 - Do NOT add words, names, or content that are not in the transcription
@@ -53,21 +60,82 @@ Use context to distinguish editing commands from literal content. "Scratch that"
 
 The context below is ONLY for correcting spelling of words already spoken. Never use it to add new content.`;
 
+// Per-content-type formatting guidance. Only appended when auto-formatting is on
+// AND a non-default type is detected — so ordinary dictation stays verbatim and
+// the base prompt's "no formatting" rule still governs it.
+const CONTENT_TYPE_PROMPTS: Record<Exclude<ContentType, 'default'>, string> = {
+  list: `\nFormatting (overrides the "no formatting" rule above): The speaker is dictating a list. Output it as a list — one item per line. Prefix each item with "- ", or with "1. ", "2. "… if the speaker used explicit numbering. Convert spoken enumeration words ("first", "second", "number one", "next") into the list structure rather than printing them.`,
+  email: `\nFormatting (overrides the "no formatting" rule above): The speaker is composing an email. Lay it out as one: the greeting on its own line, the body in short paragraphs separated by blank lines, and the sign-off (and name, if spoken) on its own line.`,
+  paragraph: `\nFormatting (overrides the "no formatting" rule above): The speaker is dictating a longer passage. Break it into readable paragraphs separated by a blank line at natural topic shifts. Do not add headings, bullets, or numbering.`,
+};
+
+const ORDINAL_WORDS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+
+/**
+ * Heuristically classify the dictated text so the refiner can auto-format it.
+ * Deliberately conservative: when in doubt it returns 'default' (no formatting),
+ * so normal dictation is never reshaped against the speaker's intent.
+ */
+export function detectContentType(text: string): ContentType {
+  const t = text.trim();
+  if (!t) return 'default';
+  const lower = t.toLowerCase();
+
+  // Email: a greeting near the start plus a sign-off or an explicit "email" cue.
+  const hasGreeting = /^(dear|hi|hey|hello)\b[\s,]/i.test(t);
+  const hasSignoff = /\b(regards|sincerely|best wishes|kind regards|warm regards|cheers|talk soon|looking forward to hearing|thanks again|many thanks)\b/i.test(lower);
+  const saysEmail = /\b(write|compose|draft|send) (an? |this )?email\b/i.test(lower) || /\bemail (to|for) \w/i.test(lower);
+  if ((hasGreeting && hasSignoff) || (hasGreeting && saysEmail) || (saysEmail && hasSignoff)) {
+    return 'email';
+  }
+
+  // List: explicit enumeration signals.
+  const ordinalHits = ORDINAL_WORDS.filter((w) => new RegExp(`\\b${w}(ly)?\\b`, 'i').test(lower)).length;
+  const numberedHits = (lower.match(/\b(number|step|item|point)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b/gi) || []).length;
+  const listCue = /\b(bullet points?|bulleted list|make a list|here are the|the steps are|to-?do list|checklist|shopping list|grocery list)\b/i.test(lower);
+  if (ordinalHits >= 2 || numberedHits >= 2 || listCue) {
+    return 'list';
+  }
+
+  // Paragraph: a long, multi-sentence block reads better with paragraph breaks.
+  // Count by code point ([...t]) to match Rust's chars().count() in refiner.rs.
+  const sentenceCount = (t.match(/[.!?]+(\s|$)/g) || []).length;
+  if ([...t].length > 320 && sentenceCount >= 4) {
+    return 'paragraph';
+  }
+
+  return 'default';
+}
+
 export function buildSystemPrompt(
   memoryFormatted: string,
   opts?: {
     customPrompt?: string;
+    appProfilePrompt?: string;
     windowContext?: string;
     vocabularyList?: string;
     existingFieldText?: string;
     existingFieldTextAfter?: string;
     projectContext?: string;
     tone?: 'casual' | 'formal';
+    contentType?: ContentType;
   },
 ): string {
   const base = opts?.customPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
 
   const sections: string[] = [base];
+
+  // Per-app profile guidance is ADDITIVE — it augments the base rules rather than
+  // replacing them, so self-correction handling, filler removal, and the EMPTY
+  // sentinel still apply in coding/prose/chat apps.
+  if (opts?.appProfilePrompt?.trim()) {
+    sections.push(`\n${opts.appProfilePrompt.trim()}`);
+  }
+
+  // Content-aware auto-formatting (only for a detected non-default type).
+  if (opts?.contentType && opts.contentType !== 'default') {
+    sections.push(CONTENT_TYPE_PROMPTS[opts.contentType]);
+  }
 
   if (opts?.tone === 'formal') {
     sections.push(`\nTone: Write in a formal, professional tone. Use complete sentences, proper grammar, and avoid contractions, slang, or overly casual phrasing.`);
@@ -126,6 +194,7 @@ Rules:
 - Do NOT change the meaning or intent of the text
 - Do NOT add, remove, or rephrase content
 - Do NOT change technical terms, variable names, or domain-specific words
+- Preserve camelCase, snake_case, dotted.identifiers, and ALL_CAPS acronyms — do not lowercase or re-case code identifiers
 - Do NOT add formatting, quotes, or markdown
 - Output ONLY the corrected text, nothing else
 - If the text has no errors, output it unchanged`;

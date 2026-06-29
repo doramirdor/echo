@@ -11,6 +11,8 @@ mod templates;
 mod history;
 mod codebase;
 mod providers;
+mod fn_monitor;
+mod updater;
 mod utils;
 
 use app_state::{AppState, EchoState};
@@ -19,7 +21,8 @@ use memory::store::MemoryStore;
 use templates::store::TemplateStore;
 use history::run_log::RunLog;
 use audio::recorder::AudioRecorder;
-use transcription::live::LiveTranscriber;
+use transcription::live::{LiveTranscriber, LiveEvent};
+use fn_monitor::FnAction;
 
 use std::sync::Arc;
 use tauri::{
@@ -29,7 +32,7 @@ use tauri::{
     image::Image,
     WebviewWindowBuilder, WebviewUrl,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 // Shared state types for Tauri
 struct EchoApp {
@@ -40,6 +43,13 @@ struct EchoApp {
     run_log: RunLog,
     recorder: Arc<Mutex<AudioRecorder>>,
     live_transcriber: Arc<Mutex<LiveTranscriber>>,
+    /// Input Monitoring permission as reported by the fn-monitor helper.
+    im_status: Arc<Mutex<String>>,
+}
+
+/// Take the first `max` characters of `s` without splitting a UTF-8 codepoint.
+fn truncate_chars(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
 }
 
 // ── IPC Commands ──────────────────────────────────────────────────────────────
@@ -50,8 +60,19 @@ async fn get_settings(state: tauri::State<'_, EchoApp>) -> Result<serde_json::Va
 }
 
 #[tauri::command]
-async fn set_setting(state: tauri::State<'_, EchoApp>, key: String, value: serde_json::Value) -> Result<(), String> {
-    state.settings.set_value(&key, value);
+async fn set_setting(app: AppHandle, state: tauri::State<'_, EchoApp>, key: String, value: serde_json::Value) -> Result<(), String> {
+    state.settings.set_value(&key, value.clone());
+
+    // Keep the OS login item in sync when the toggle changes.
+    if key == "openAtLogin" {
+        use tauri_plugin_autostart::ManagerExt;
+        let mgr = app.autolaunch();
+        if value.as_bool().unwrap_or(false) {
+            let _ = mgr.enable();
+        } else {
+            let _ = mgr.disable();
+        }
+    }
     Ok(())
 }
 
@@ -79,16 +100,20 @@ async fn get_status(state: tauri::State<'_, EchoApp>) -> Result<serde_json::Valu
     let (sox_ok, sox_msg) = AudioRecorder::check_dependencies();
     let (ax_ok, ax_msg) = insertion::text_inserter::check_permissions();
 
+    // Input Monitoring is reported by the fn-monitor helper itself (it tries to
+    // tap the fn key and tells us whether the OS allowed it).
+    let im = state.im_status.lock().await.clone();
+    let im_ok = im == "granted";
+
     Ok(serde_json::json!({
         "state": current_state.to_string(),
         "whisper": { "binary": whisper_bin, "model": whisper_model },
         "sox": { "ok": sox_ok, "message": sox_msg },
         "accessibility": { "ok": ax_ok, "message": ax_msg },
-        // Microphone / Input Monitoring TCC status isn't queried natively on the Tauri
-        // side yet — report "unknown" so the settings UI shows an "Open" shortcut to the
-        // right pane rather than a misleading "granted/denied".
+        // Microphone TCC status isn't queried natively yet — report "unknown" so
+        // the settings UI shows an "Open" shortcut rather than a misleading state.
         "microphone": { "ok": false, "status": "unknown" },
-        "inputMonitoring": { "ok": false, "status": "unknown" },
+        "inputMonitoring": { "ok": im_ok, "status": im },
     }))
 }
 
@@ -174,17 +199,24 @@ async fn complete_onboarding(state: tauri::State<'_, EchoApp>, app: AppHandle) -
 }
 
 #[tauri::command]
-async fn download_whisper_model(model_name: Option<String>, state: tauri::State<'_, EchoApp>) -> Result<serde_json::Value, String> {
+async fn download_whisper_model(app: AppHandle, model_name: Option<String>, state: tauri::State<'_, EchoApp>) -> Result<serde_json::Value, String> {
     let name = model_name.unwrap_or_else(|| state.settings.get(|s| s.whisper_model_name.clone()));
-    match transcription::whisper::download_model(&name, |_percent| {}).await {
+    let app2 = app.clone();
+    match transcription::whisper::download_model(&name, move |percent| {
+        let _ = app2.emit("download-progress", percent);
+    }).await {
         Ok(()) => Ok(serde_json::json!({ "success": true })),
         Err(e) => Ok(serde_json::json!({ "success": false, "error": e })),
     }
 }
 
 #[tauri::command]
-async fn build_whisper_binary() -> Result<serde_json::Value, String> {
-    match transcription::whisper::build_binary(|msg| { log::info!("[build] {}", msg); }).await {
+async fn build_whisper_binary(app: AppHandle) -> Result<serde_json::Value, String> {
+    let app2 = app.clone();
+    match transcription::whisper::build_binary(move |msg| {
+        log::info!("[build] {}", msg);
+        let _ = app2.emit("build-progress", msg);
+    }).await {
         Ok(()) => Ok(serde_json::json!({ "success": true })),
         Err(e) => Ok(serde_json::json!({ "success": false, "error": e })),
     }
@@ -354,23 +386,130 @@ async fn reinsert_from_history(state: tauri::State<'_, EchoApp>, text: String) -
     insertion::text_inserter::insert(&text, source_app.as_deref()).await
 }
 
-// ── Core Logic ────────────────────────────────────────────────────────────────
+// ── Recording control ─────────────────────────────────────────────────────────
 
+/// Reset the per-recording trigger flags.
+async fn clear_hold_flags(echo: &EchoApp) {
+    let mut inner = echo.app_state.inner.lock().await;
+    inner.fn_hold_recording = false;
+    inner.hotkey_hold_recording = false;
+}
+
+/// Plain toggle used by the tray menu and the renderer's overlay button — there's
+/// no key to "release", so it always flips between idle and recording.
 async fn handle_toggle(app: &AppHandle, echo: &EchoApp) {
-    let current = echo.app_state.get_state().await;
-    match current {
-        EchoState::Recording => {
-            stop_recording(app, echo).await;
-        }
+    match echo.app_state.get_state().await {
+        EchoState::Recording => stop_recording(app, echo).await,
         EchoState::Idle | EchoState::Error => {
-            start_recording(app, echo).await;
+            clear_hold_flags(echo).await;
+            begin_recording_with_delay(app, echo).await;
         }
         _ => {}
     }
 }
 
+/// The fallback global-shortcut was pressed. In hold mode this starts recording
+/// (the release stops it); in toggle mode it flips state.
+async fn handle_hotkey_pressed(app: &AppHandle, echo: &EchoApp) {
+    let mode = echo.settings.get(|s| s.recording_mode.clone());
+    let state = echo.app_state.get_state().await;
+
+    if mode == "hold" {
+        if matches!(state, EchoState::Idle | EchoState::Error) {
+            {
+                let mut inner = echo.app_state.inner.lock().await;
+                inner.fn_hold_recording = false;
+                inner.hotkey_hold_recording = true;
+            }
+            begin_recording_with_delay(app, echo).await;
+        }
+        return;
+    }
+
+    match state {
+        EchoState::Recording => stop_recording(app, echo).await,
+        EchoState::Idle | EchoState::Error => {
+            clear_hold_flags(echo).await;
+            begin_recording_with_delay(app, echo).await;
+        }
+        _ => {}
+    }
+}
+
+/// The fallback global-shortcut was released — only meaningful in hold mode.
+async fn handle_hotkey_released(app: &AppHandle, echo: &EchoApp) {
+    let mode = echo.settings.get(|s| s.recording_mode.clone());
+    if !echo.app_state.is_recording().await {
+        return;
+    }
+    let hotkey_hold = echo.app_state.inner.lock().await.hotkey_hold_recording;
+    if hotkey_hold || mode == "hold" {
+        clear_hold_flags(echo).await;
+        stop_recording(app, echo).await;
+    }
+}
+
+/// High-level fn-key gestures from the Swift monitor.
+async fn handle_fn_action(app: &AppHandle, echo: &EchoApp, action: FnAction) {
+    let state = echo.app_state.get_state().await;
+    match action {
+        FnAction::HoldStart => {
+            if matches!(state, EchoState::Idle | EchoState::Error) {
+                {
+                    let mut inner = echo.app_state.inner.lock().await;
+                    inner.fn_hold_recording = true;
+                    inner.hotkey_hold_recording = false;
+                }
+                begin_recording_with_delay(app, echo).await;
+            }
+        }
+        FnAction::HoldEnd => {
+            let fn_hold = echo.app_state.inner.lock().await.fn_hold_recording;
+            if state == EchoState::Recording && fn_hold {
+                echo.app_state.inner.lock().await.fn_hold_recording = false;
+                stop_recording(app, echo).await;
+            }
+        }
+        FnAction::DoubleClick => match state {
+            EchoState::Idle | EchoState::Error => {
+                clear_hold_flags(echo).await;
+                begin_recording_with_delay(app, echo).await;
+            }
+            EchoState::Recording => {
+                let fn_hold = echo.app_state.inner.lock().await.fn_hold_recording;
+                if !fn_hold {
+                    stop_recording(app, echo).await;
+                }
+            }
+            _ => {}
+        },
+        FnAction::SingleClick => {
+            // A single fn tap stops toggle-style recording (started via double-click).
+            if state == EchoState::Recording {
+                let fn_hold = echo.app_state.inner.lock().await.fn_hold_recording;
+                if !fn_hold {
+                    stop_recording(app, echo).await;
+                }
+            }
+        }
+    }
+}
+
+async fn begin_recording_with_delay(app: &AppHandle, echo: &EchoApp) {
+    let delay = echo.settings.get(|s| s.start_delay);
+    if delay > 0 {
+        log::info!("[echo] Starting recording in {}ms", delay);
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+        // Bail if state changed during the delay (e.g. user cancelled).
+        if !matches!(echo.app_state.get_state().await, EchoState::Idle | EchoState::Error) {
+            return;
+        }
+    }
+    start_recording(app, echo).await;
+}
+
 async fn start_recording(app: &AppHandle, echo: &EchoApp) {
-    // Capture source app
+    // Capture source app (frontmost) so we can re-activate it and insert there.
     let source_app = std::process::Command::new("osascript")
         .args(["-e", "tell application \"System Events\" to get name of first application process whose frontmost is true"])
         .output()
@@ -382,34 +521,79 @@ async fn start_recording(app: &AppHandle, echo: &EchoApp) {
         let mut inner = echo.app_state.inner.lock().await;
         inner.source_app = source_app.clone();
         inner.live_injected_text.clear();
+        inner.existing_field_text = None;
+        inner.existing_field_text_after = None;
     }
 
     let device = echo.settings.get(|s| {
         if s.audio_device.is_empty() { None } else { Some(s.audio_device.clone()) }
     });
 
-    let mut recorder = echo.recorder.lock().await;
-    if let Err(e) = recorder.start(device.as_deref()) {
-        let msg = utils::errors::to_user_facing_error(&e);
-        echo.app_state.set_state(EchoState::Error, Some(msg)).await;
-        return;
+    let level_rx = {
+        let mut recorder = echo.recorder.lock().await;
+        if let Err(e) = recorder.start(device.as_deref()) {
+            let msg = utils::errors::to_user_facing_error(&e);
+            echo.app_state.set_state(EchoState::Error, Some(msg.clone())).await;
+            let _ = app.emit("state-change", ("error", serde_json::json!({ "error": msg })));
+            return;
+        }
+        recorder.level_receiver()
+    };
+
+    // Mark recording BEFORE spawning the level task so it sees the live state.
+    echo.app_state.set_state(EchoState::Recording, None).await;
+
+    // Live transcription: stream partials to the overlay and inject finals into
+    // the target app while still recording. The final refined text later replaces
+    // what was injected (see run_pipeline → replace_live_text).
+    if let Some(mut live_rx) = echo.live_transcriber.lock().await.start() {
+        let app_handle = app.clone();
+        tokio::spawn(async move {
+            while let Some(ev) = live_rx.recv().await {
+                let echo = app_handle.state::<EchoApp>();
+                match ev {
+                    LiveEvent::Partial(text) => {
+                        let _ = app_handle.emit("live-transcript", text);
+                    }
+                    LiveEvent::Final(text) => {
+                        let trimmed = text.trim().to_string();
+                        if trimmed.is_empty() { continue; }
+                        let _ = app_handle.emit("live-transcript", trimmed.clone());
+                        if echo.app_state.is_recording().await {
+                            let sep = {
+                                let inner = echo.app_state.inner.lock().await;
+                                if inner.live_injected_text.is_empty() { "" } else { " " }
+                            };
+                            let chunk = format!("{}{}", sep, trimmed);
+                            let _ = insertion::text_inserter::insert_live(&chunk).await;
+                            echo.app_state.inner.lock().await.live_injected_text.push_str(&chunk);
+                            log::info!("[echo] Live injected: \"{}\"", trimmed);
+                        }
+                    }
+                }
+            }
+        });
     }
 
-    // Spawn audio level emitter task
-    let mut level_rx = recorder.level_receiver();
-    let app_handle = app.clone();
-    tokio::spawn(async move {
-        while level_rx.changed().await.is_ok() {
-            let level = *level_rx.borrow();
-            let _ = app_handle.emit("audio-level", level);
-            tokio::time::sleep(std::time::Duration::from_millis(33)).await;
-        }
-    });
+    // Caret context for sentence continuation (best-effort, off the hot path).
+    {
+        let app_handle = app.clone();
+        tokio::spawn(async move {
+            if let Ok(fc) = tokio::task::spawn_blocking(context::window::capture_field_context).await {
+                let echo = app_handle.state::<EchoApp>();
+                let mut inner = echo.app_state.inner.lock().await;
+                inner.existing_field_text = if fc.before.is_empty() { None } else { Some(fc.before) };
+                inner.existing_field_text_after = if fc.after.is_empty() { None } else { Some(fc.after) };
+            }
+        });
+    }
 
-    echo.app_state.set_state(EchoState::Recording, None).await;
+    // Audio-level metering for the overlay waveform + silence auto-stop.
+    spawn_level_task(app, echo, level_rx);
+
     audio::sounds::play_recording_start();
 
-    // Re-activate source app
+    // Re-activate the source app so the keystroke lands where the user was.
     if let Some(ref app_name) = source_app {
         let escaped = app_name.replace('\\', "\\\\").replace('"', "\\\"");
         let _ = std::process::Command::new("osascript")
@@ -418,6 +602,56 @@ async fn start_recording(app: &AppHandle, echo: &EchoApp) {
     }
 
     let _ = app.emit("state-change", ("recording", serde_json::json!({})));
+}
+
+/// Forwards audio levels to the overlay and auto-stops on sustained silence.
+/// Exits when recording ends so tasks don't accumulate across sessions.
+fn spawn_level_task(app: &AppHandle, echo: &EchoApp, mut level_rx: tokio::sync::watch::Receiver<f32>) {
+    let app_handle = app.clone();
+    let silence_detection = echo.settings.get(|s| s.silence_detection);
+    let whisper_mode = echo.settings.get(|s| s.whisper_mode);
+    let mut threshold = echo.settings.get(|s| s.silence_threshold);
+    if whisper_mode {
+        // Quiet speech mustn't be mistaken for silence in whisper mode.
+        threshold = threshold.min(0.005);
+    }
+    let duration_ms = echo.settings.get(|s| s.silence_duration);
+
+    tokio::spawn(async move {
+        let mut silence_start: Option<std::time::Instant> = None;
+        // Grace period so the silent moment before the first word isn't counted.
+        let grace_until = std::time::Instant::now() + std::time::Duration::from_millis(1000);
+
+        while level_rx.changed().await.is_ok() {
+            let echo = app_handle.state::<EchoApp>();
+            if !echo.app_state.is_recording().await {
+                break;
+            }
+
+            let level = *level_rx.borrow();
+            let _ = app_handle.emit("audio-level", level);
+
+            if silence_detection && std::time::Instant::now() >= grace_until {
+                if (level as f64) < threshold {
+                    match silence_start {
+                        None => silence_start = Some(std::time::Instant::now()),
+                        Some(start) => {
+                            if start.elapsed().as_millis() as u64 >= duration_ms {
+                                log::info!("[echo] Silence detected ({}ms), auto-stopping", duration_ms);
+                                clear_hold_flags(&echo).await;
+                                stop_recording(&app_handle, &echo).await;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    silence_start = None;
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(33)).await;
+        }
+    });
 }
 
 async fn stop_recording(app: &AppHandle, echo: &EchoApp) {
@@ -471,18 +705,60 @@ async fn run_pipeline(
         log::info!("[pipeline] Transcribing with {}...", stt_engine);
 
         // Capture window context concurrently with transcription so its latency
-        // (osascript/screenshot) is hidden behind the STT round trip instead of
-        // adding to time-to-first-insertion. Only when an LLM will consume it.
+        // (osascript/screenshot/LLM synthesis) is hidden behind the STT round trip
+        // instead of adding to time-to-first-insertion. Only when an LLM consumes it.
         let context_handle = if llm_provider != "none" && settings.get(|s| s.use_window_context) {
-            Some(tokio::task::spawn_blocking(|| {
-                let wctx = context::window::capture_window_context();
-                context::window::format_window_context(&wctx)
+            let provider = settings.get(|s| s.context_provider.clone());
+            let capture_shots = settings.get(|s| s.capture_screenshots);
+            let claude_key = settings.get(|s| s.claude_api_key.clone());
+            let groq_key = settings.get(|s| s.groq_api_key.clone());
+            Some(tokio::spawn(async move {
+                let wctx = tokio::task::spawn_blocking(context::window::capture_window_context)
+                    .await
+                    .unwrap_or_default();
+                if provider != "none" {
+                    // Summarize the active window (and optionally a screenshot) via an LLM.
+                    let screenshot = if capture_shots {
+                        tokio::task::spawn_blocking(context::window::capture_screenshot)
+                            .await
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
+                    let api_key = if provider == "claude" { claude_key } else { groq_key };
+                    let synthesized = context::synthesizer::synthesize_context(
+                        &wctx, screenshot.as_deref(), &provider, &api_key,
+                    )
+                    .await
+                    .unwrap_or_default();
+                    if let Some(path) = screenshot {
+                        context::window::cleanup_screenshot(&path);
+                    }
+                    synthesized
+                } else {
+                    context::window::format_window_context(&wctx)
+                }
             }))
         } else {
             None
         };
 
-        let result = transcription::transcribe_audio(&stt_engine, &clean_path, &wav_path, settings).await?;
+        // Bias recognition toward known vocabulary, learned corrections, and
+        // project jargon — fixes terms *during* transcription, before the LLM runs.
+        let bias_prompt = transcription::speech_bias::build_speech_bias_prompt(
+            &settings.get(|s| s.vocabulary_list.clone()),
+            &memory.get_all(),
+            codebase::analyzer::load_context().as_deref(),
+        );
+
+        let result = transcription::transcribe_audio(&stt_engine, &clean_path, &wav_path, settings, &bias_prompt).await?;
+
+        // Surface low-confidence segments (Deepgram/OpenAI) to the overlay.
+        let low_conf: Vec<_> = result.segments.iter().filter(|s| s.confidence < 0.7).cloned().collect();
+        if !low_conf.is_empty() {
+            let _ = app.emit("confidence-segments", &low_conf);
+        }
 
         let raw_text = result.text;
         log::info!("[pipeline] RAW: \"{}\"", raw_text);
@@ -509,9 +785,35 @@ async fn run_pipeline(
 
         // Refine
         let mut refined_text = cleaned.clone();
+
+        // What is currently shown in the target app and will be replaced by the
+        // refined text. Starts as whatever was injected live during recording.
+        let mut injected_text = live_injected_text.clone();
+        // Continuation join only applies when NOT replacing live text — the live
+        // path already handled spacing/capitalization while recording.
+        let continuation_before = if injected_text.is_empty() {
+            app_state.inner.lock().await.existing_field_text.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+
         if !voice_result.skip_refinement && llm_provider != "none" {
             app_state.set_state(EchoState::Refining, None).await;
             let _ = app.emit("state-change", ("refining", serde_json::json!({})));
+
+            // Instant feedback (Wispr-style): if nothing has been injected yet (live
+            // transcription was off or silent), insert the raw transcript now and
+            // swap in the refined version once it lands.
+            if injected_text.is_empty() {
+                let early = if continuation_before.is_empty() {
+                    cleaned.clone()
+                } else {
+                    insertion::continuation::join_continuation(&continuation_before, &cleaned)
+                };
+                if insertion::text_inserter::insert_live(&early).await.is_ok() {
+                    injected_text = early;
+                }
+            }
 
             let relevant = memory.find_relevant(&cleaned);
             let formatted = memory.format_for_prompt(&relevant);
@@ -531,15 +833,31 @@ async fn run_pipeline(
                 }
             }
 
+            // Per-app profile prompt — passed separately so it AUGMENTS the base
+            // rules instead of replacing them (a user custom prompt still replaces).
             let profile_prompt = context::app_profiles::get_profile_prompt(
                 source_app.as_deref(),
                 &settings.get(|s| s.app_profiles.clone()),
             );
+            let custom_prompt = settings.get(|s| s.custom_prompt.clone());
 
-            let mut custom_prompt = settings.get(|s| s.custom_prompt.clone());
-            if !profile_prompt.is_empty() {
-                custom_prompt = if custom_prompt.is_empty() { profile_prompt } else { format!("{}\n\n{}", profile_prompt, custom_prompt) };
-            }
+            let (field_before, field_after) = {
+                let inner = app_state.inner.lock().await;
+                (inner.existing_field_text.clone(), inner.existing_field_text_after.clone())
+            };
+
+            // Content-aware auto-formatting: only for a fresh field (not a
+            // mid-sentence continuation) and only when the user hasn't disabled it.
+            let content_type = if settings.get(|s| s.auto_format_content)
+                && field_before.as_deref().map_or(true, |s| s.is_empty())
+            {
+                match refinement::refiner::detect_content_type(&cleaned) {
+                    "default" => None,
+                    ct => Some(ct.to_string()),
+                }
+            } else {
+                None
+            };
 
             let ctx = refinement::RefinementContext {
                 memory_entries: relevant.clone(),
@@ -547,8 +865,11 @@ async fn run_pipeline(
                 window_context: Some(window_context_str),
                 vocabulary_list: Some(settings.get(|s| s.vocabulary_list.clone())),
                 custom_prompt: Some(custom_prompt),
-                existing_field_text: app_state.inner.lock().await.existing_field_text.clone(),
+                app_profile_prompt: if profile_prompt.is_empty() { None } else { Some(profile_prompt) },
+                existing_field_text: field_before,
+                existing_field_text_after: field_after,
                 tone: Some(settings.get(|s| s.tone.clone())),
+                content_type,
             };
 
             match refinement::refine(&llm_provider, &cleaned, &ctx, settings).await {
@@ -556,6 +877,12 @@ async fn run_pipeline(
                     refined_text = refinement::refiner::sanitize_refined_output(&text);
                     if refined_text == "EMPTY" || refined_text.is_empty() {
                         log::info!("[pipeline] LLM returned EMPTY");
+                        // Remove anything we optimistically injected for instant feedback.
+                        if !injected_text.is_empty() {
+                            let _ = insertion::text_inserter::replace_live_text(
+                                "", injected_text.chars().count(), source_app.as_deref(),
+                            ).await;
+                        }
                         app_state.set_state(EchoState::Idle, None).await;
                         let _ = app.emit("state-change", ("idle", serde_json::json!({})));
                         return Ok(());
@@ -567,25 +894,72 @@ async fn run_pipeline(
                     refined_text = cleaned.clone();
                 }
             }
+
+            // Optional second pass: a dedicated grammar/punctuation validator.
+            // Only run when refinement actually changed the text (off by default
+            // for speed, but on in defaults here to match the Electron pipeline).
+            if settings.get(|s| s.grammar_check) && refined_text != cleaned {
+                let grammar_ctx = refinement::RefinementContext {
+                    memory_entries: vec![],
+                    memory_formatted: String::new(),
+                    window_context: None,
+                    vocabulary_list: None,
+                    custom_prompt: Some(refinement::refiner::GRAMMAR_VALIDATION_PROMPT.to_string()),
+                    app_profile_prompt: None,
+                    existing_field_text: None,
+                    existing_field_text_after: None,
+                    tone: None,
+                    content_type: None,
+                };
+                match refinement::refine(&llm_provider, &refined_text, &grammar_ctx, settings).await {
+                    Ok(g) => {
+                        let g = refinement::refiner::sanitize_refined_output(&g);
+                        if !g.is_empty() && g != "EMPTY" {
+                            refined_text = g;
+                        }
+                    }
+                    Err(e) => log::warn!("[pipeline] Grammar validation failed: {}", e),
+                }
+            }
         }
 
         app_state.set_transcription(raw_text.clone(), refined_text.clone()).await;
 
-        // Insert
-        log::info!("[pipeline] Inserting: \"{}\"", refined_text);
         app_state.set_state(EchoState::Inserting, None).await;
 
-        if !live_injected_text.is_empty() {
-            insertion::text_inserter::replace_live_text(&refined_text, live_injected_text.len(), source_app.as_deref()).await?;
+        if !injected_text.is_empty() {
+            // Replace the text already on screen (live or instant-insert) with the
+            // refined version. Skip the round trip if it would be a no-op.
+            let final_text = if continuation_before.is_empty() {
+                refined_text.clone()
+            } else {
+                insertion::continuation::join_continuation(&continuation_before, &refined_text)
+            };
+            if final_text != injected_text {
+                let live_chars = injected_text.chars().count();
+                log::info!("[pipeline] Inserting (replace {} chars): \"{}\"", live_chars, final_text);
+                insertion::text_inserter::replace_live_text(&final_text, live_chars, source_app.as_deref()).await?;
+            } else {
+                log::info!("[pipeline] Refined text matches what is already inserted — leaving as-is");
+            }
         } else {
-            insertion::text_inserter::insert(&refined_text, source_app.as_deref()).await?;
+            // Nothing on screen yet (no LLM and no live text): fresh insert,
+            // continuing from the caret. Deterministic, works with no LLM.
+            let before = app_state.inner.lock().await.existing_field_text.clone().unwrap_or_default();
+            let text_to_insert = if before.is_empty() {
+                refined_text.clone()
+            } else {
+                insertion::continuation::join_continuation(&before, &refined_text)
+            };
+            log::info!("[pipeline] Inserting: \"{}\"", text_to_insert);
+            insertion::text_inserter::insert(&text_to_insert, source_app.as_deref()).await?;
         }
 
         log::info!("[pipeline] Done");
         app_state.set_state(EchoState::Idle, None).await;
 
         let _ = app.emit("state-change", ("idle", serde_json::json!({
-            "lastResult": &refined_text[..refined_text.len().min(60)],
+            "lastResult": truncate_chars(&refined_text, 60),
             "rawResult": raw_text,
         })));
 
@@ -595,11 +969,14 @@ async fn run_pipeline(
         // Vocabulary learning
         memory::vocabulary::analyze_and_learn(memory, &cleaned, &refined_text);
 
-        // Notification
-        let _ = app.emit("notification", serde_json::json!({
-            "title": "Echo",
-            "body": if refined_text.len() > 80 { format!("{}...", &refined_text[..80]) } else { refined_text },
-        }));
+        // Notification (native, via the notification plugin).
+        let body = if refined_text.chars().count() > 80 {
+            format!("{}...", truncate_chars(&refined_text, 80))
+        } else {
+            refined_text.clone()
+        };
+        use tauri_plugin_notification::NotificationExt;
+        let _ = app.notification().builder().title("Echo").body(&body).show();
 
         Ok(())
     }.await;
@@ -609,6 +986,12 @@ async fn run_pipeline(
         log::error!("[pipeline] ERROR: {}", msg);
         app_state.set_state(EchoState::Error, Some(msg.clone())).await;
         let _ = app.emit("state-change", ("error", serde_json::json!({ "error": msg })));
+
+        use tauri_plugin_notification::NotificationExt;
+        let _ = app.notification().builder()
+            .title("Echo — Error")
+            .body(truncate_chars(&msg, 100))
+            .show();
 
         run_log.add(String::new(), String::new(), String::new(), stt_engine, llm_provider, pipeline_start.elapsed().as_millis() as u64, Some(msg));
 
@@ -658,6 +1041,9 @@ fn create_overlay(app: &AppHandle) {
         .resizable(false)
         .skip_taskbar(true)
         .focused(false)
+        // Start hidden — the state watcher shows it when recording begins and
+        // hides it again shortly after returning to idle.
+        .visible(false)
         .visible_on_all_workspaces(true)
         .build();
 }
@@ -676,7 +1062,8 @@ fn toggle_overlay_window(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    // File-backed logger so the in-app log viewer has content (also prints to stderr).
+    utils::logger::init();
 
     let echo = EchoApp {
         app_state: AppState::new(),
@@ -686,12 +1073,14 @@ pub fn run() {
         run_log: RunLog::new(),
         recorder: Arc::new(Mutex::new(AudioRecorder::new())),
         live_transcriber: Arc::new(Mutex::new(LiveTranscriber::new())),
+        im_status: Arc::new(Mutex::new("unknown".to_string())),
     };
 
-    // Pre-compile Swift binaries
+    // Pre-compile Swift binaries (best-effort; recompiled on demand if stale).
     utils::swift_binary::ensure_swift_binary("fn-monitor", "scripts/fn-monitor.swift");
     utils::swift_binary::ensure_swift_binary("live-transcribe", "scripts/live-transcribe.swift");
     utils::swift_binary::ensure_swift_binary("transcribe", "scripts/transcribe.swift");
+    utils::swift_binary::ensure_swift_binary("field-context", "scripts/field-context.swift");
 
     let show_onboarding_on_start: bool = !echo.settings.get(|s| s.onboarding_complete);
 
@@ -706,6 +1095,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(echo)
         .invoke_handler(tauri::generate_handler![
             get_settings, set_setting,
@@ -748,7 +1138,7 @@ pub fn run() {
                 Image::from_bytes(include_bytes!("../icons/tray-icon.png")).unwrap()
             };
 
-            let _tray = TrayIconBuilder::new()
+            let _tray = TrayIconBuilder::with_id("main")
                 .icon(icon)
                 .icon_as_template(true)
                 .menu(&menu)
@@ -783,23 +1173,129 @@ pub fn run() {
             // Create overlay
             create_overlay(app.handle());
 
-            // Register global shortcuts
+            // ── fn-key monitor (primary trigger): hold / double-click / single-click ──
+            {
+                let (tx, mut rx) = mpsc::unbounded_channel::<FnAction>();
+                let im_status = app.state::<EchoApp>().im_status.clone();
+                fn_monitor::start(tx, im_status);
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Some(action) = rx.recv().await {
+                        let echo = app_handle.state::<EchoApp>();
+                        handle_fn_action(&app_handle, &echo, action).await;
+                    }
+                });
+                log::info!("[echo] fn key monitor started");
+            }
+
+            // ── Fallback global hotkeys ──
+            use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
             let hotkey = app.state::<EchoApp>().settings.get(|s| s.hotkey.clone());
-            let app_handle = app.handle().clone();
-            use tauri_plugin_global_shortcut::GlobalShortcutExt;
             let hotkey_str = hotkey.replace("CommandOrControl", "CmdOrCtrl");
+            let app_handle = app.handle().clone();
             if let Err(e) = app.global_shortcut().on_shortcut(hotkey_str.as_str(), move |_app, _shortcut, event| {
-                if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                    let app = app_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let state = app.state::<EchoApp>();
-                        handle_toggle(&app, &state).await;
-                    });
-                }
+                // Pressed/Released both fire here — hold mode stops on release.
+                let pressed = event.state == ShortcutState::Pressed;
+                let app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<EchoApp>();
+                    if pressed {
+                        handle_hotkey_pressed(&app, &state).await;
+                    } else {
+                        handle_hotkey_released(&app, &state).await;
+                    }
+                });
             }) {
                 log::error!("[echo] Failed to register hotkey {}: {}", hotkey_str, e);
             } else {
-                log::info!("[echo] Hotkey registered: {}", hotkey_str);
+                log::info!("[echo] Fallback hotkey registered: {}", hotkey_str);
+            }
+
+            // Overlay toggle hotkey.
+            let overlay_hotkey = app.state::<EchoApp>().settings.get(|s| s.overlay_hotkey.clone());
+            let overlay_hotkey_str = overlay_hotkey.replace("CommandOrControl", "CmdOrCtrl");
+            let app_handle2 = app.handle().clone();
+            if let Err(e) = app.global_shortcut().on_shortcut(overlay_hotkey_str.as_str(), move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    toggle_overlay_window(&app_handle2);
+                }
+            }) {
+                log::error!("[echo] Failed to register overlay hotkey {}: {}", overlay_hotkey_str, e);
+            } else {
+                log::info!("[echo] Overlay hotkey registered: {}", overlay_hotkey_str);
+            }
+
+            // ── State watcher: drive tray label + overlay visibility from state ──
+            {
+                let app_handle = app.handle().clone();
+                let mut rx = app.state::<EchoApp>().app_state.state_rx.clone();
+                let toggle_item = toggle_item.clone();
+                tauri::async_runtime::spawn(async move {
+                    while rx.changed().await.is_ok() {
+                        let (state, _err) = rx.borrow().clone();
+
+                        if let Some(tray) = app_handle.tray_by_id("main") {
+                            if state == EchoState::Recording {
+                                let _ = tray.set_tooltip(Some("Echo — Recording…"));
+                                let _ = toggle_item.set_text("Stop Recording");
+                            } else {
+                                let _ = tray.set_tooltip(Some("Echo — Voice to Text"));
+                                let _ = toggle_item.set_text("Start Recording");
+                            }
+                        }
+
+                        if let Some(win) = app_handle.get_webview_window("overlay") {
+                            match state {
+                                EchoState::Idle => {
+                                    // Linger briefly to show the result, then hide if still idle.
+                                    let w = win.clone();
+                                    let ah = app_handle.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                                        if ah.state::<EchoApp>().app_state.get_state().await == EchoState::Idle {
+                                            let _ = w.hide();
+                                        }
+                                    });
+                                }
+                                EchoState::Error => {
+                                    audio::sounds::play_error();
+                                    let _ = win.show();
+                                    let w = win.clone();
+                                    let ah = app_handle.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+                                        if ah.state::<EchoApp>().app_state.get_state().await == EchoState::Idle {
+                                            let _ = w.hide();
+                                        }
+                                    });
+                                }
+                                _ => {
+                                    let _ = win.show();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // ── Sync the OS login item with the saved preference ──
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let want = app.state::<EchoApp>().settings.get(|s| s.open_at_login);
+                let mgr = app.autolaunch();
+                let enabled = mgr.is_enabled().unwrap_or(false);
+                if want && !enabled {
+                    let _ = mgr.enable();
+                } else if !want && enabled {
+                    let _ = mgr.disable();
+                }
+            }
+
+            // ── Auto-updater (packaged builds only; mirrors src/main/updater.ts) ──
+            {
+                let auto_update = app.state::<EchoApp>().settings.get(|s| s.auto_update_enabled);
+                updater::setup_auto_updater(app.handle().clone(), auto_update);
             }
 
             // Show onboarding if needed

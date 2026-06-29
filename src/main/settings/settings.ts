@@ -42,6 +42,7 @@ export interface EchoSettings {
   audioDevice: string;
   customPromptDate: string;
   grammarCheck: boolean;
+  autoFormatContent: boolean;  // auto-format dictated lists/emails/long passages
   silenceDetection: boolean;
   silenceThreshold: number;  // 0–1 level below which counts as silence
   silenceDuration: number;   // ms of silence before auto-stopping
@@ -92,7 +93,8 @@ const defaults: EchoSettings = {
   startDelay: 0,
   audioDevice: '',
   customPromptDate: '',
-  grammarCheck: false,  // off by default for speed — main refine already fixes grammar
+  grammarCheck: true,  // on by default for accuracy (zero-edit parity); matches the Tauri default
+  autoFormatContent: true,  // format spoken lists/emails/passages automatically
   silenceDetection: true,
   silenceThreshold: 0.02,
   silenceDuration: 2000,

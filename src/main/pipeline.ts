@@ -1,4 +1,5 @@
 import { Notification } from 'electron';
+import * as fs from 'fs';
 import { AppState, EchoState } from './appState';
 import { AudioRecorder } from './audio/recorder';
 import { WhisperService } from './transcription/whisperService';
@@ -17,7 +18,7 @@ import { GeminiRefiner } from './refinement/geminiRefiner';
 import { BedrockRefiner } from './refinement/bedrockRefiner';
 import { GroqRefiner } from './refinement/groqRefiner';
 import { LlamaLocalRefiner } from './refinement/llamaRefiner';
-import { LLMRefiner, sanitizeRefinedOutput, GRAMMAR_VALIDATION_PROMPT } from './refinement/refiner';
+import { LLMRefiner, sanitizeRefinedOutput, GRAMMAR_VALIDATION_PROMPT, detectContentType } from './refinement/refiner';
 import { getSetting } from './settings/settings';
 import { captureWindowContext, formatWindowContext } from './context/windowContext';
 import { getProfilePrompt } from './context/appProfiles';
@@ -99,10 +100,17 @@ async function transcribeAudio(
 ): Promise<{ text: string; segments: TranscriptionSegment[] }> {
   if (sttEngine === 'groq') {
     const groq = new GroqTranscriber(getSetting('groqApiKey'));
-    // EXPERIMENT: compress the upload (FLAC by default) to cut upload bytes.
+    // Compress the upload (FLAC by default) to cut upload bytes.
     const uploadPath = AudioRecorder.encodeForUpload(cleanPath);
-    const text = await groq.transcribe(uploadPath, { prompt: opts?.biasPrompt, language: opts?.language });
-    return { text, segments: [] };
+    try {
+      const text = await groq.transcribe(uploadPath, { prompt: opts?.biasPrompt, language: opts?.language });
+      return { text, segments: [] };
+    } finally {
+      // Clean up the encoded temp file (mirrors the Rust pipeline).
+      if (uploadPath !== cleanPath) {
+        try { fs.unlinkSync(uploadPath); } catch { /* best-effort temp cleanup */ }
+      }
+    }
   }
   if (sttEngine === 'macos') {
     const text = await macosSTT.transcribe(wavPath);
@@ -211,8 +219,29 @@ export async function runPipeline(
     let refinedText = cleaned;
     const refiner = voiceResult.skipRefinement ? null : createRefiner();
 
+    // What is currently shown in the target app and will be replaced by the
+    // refined text. Starts as whatever was injected live during recording.
+    let injectedText = liveInjectedText;
+    // Continuation join only applies when we are NOT replacing live text — the
+    // live path already handled spacing/capitalization while recording.
+    const continuationBefore = injectedText ? '' : (appState.existingFieldText || '');
+
     if (refiner) {
       appState.setState(EchoState.Refining);
+
+      // Instant feedback (Wispr-style): if nothing has been injected yet (live
+      // transcription was off or silent), insert the raw transcript now and swap
+      // in the refined version once it lands — rather than waiting for the LLM.
+      if (!injectedText) {
+        const early = continuationBefore ? joinContinuation(continuationBefore, cleaned) : cleaned;
+        try {
+          await inserter.insertLive(early);
+          injectedText = early;
+        } catch (err) {
+          logger.warn('pipeline', `Instant insert failed: ${(err as Error).message}`);
+        }
+      }
+
       const relevant = memory.findRelevant(cleaned);
       const formatted = memory.formatForPrompt(relevant);
 
@@ -240,18 +269,23 @@ export async function runPipeline(
           : `Recent dictations:\n${historyContext}`;
       }
 
-      // Per-app profile prompt
+      // Per-app profile prompt — passed separately so it AUGMENTS the base
+      // rules instead of replacing them (a user custom prompt still replaces).
       const profilePrompt = getProfilePrompt(appState.sourceApp);
       const vocabularyList = getSetting('vocabularyList')?.trim() || '';
-      let customPrompt = getSetting('customPrompt')?.trim() || '';
-      if (profilePrompt) {
-        customPrompt = customPrompt
-          ? `${profilePrompt}\n\n${customPrompt}`
-          : profilePrompt;
-      }
+      const customPrompt = getSetting('customPrompt')?.trim() || '';
 
       const existingFieldText = appState.existingFieldText || '';
       const tone = getSetting('tone');
+
+      // Content-aware auto-formatting: only for a fresh field (not a mid-sentence
+      // continuation) and only when the user hasn't turned it off.
+      const contentType = (getSetting('autoFormatContent') && !existingFieldText)
+        ? detectContentType(cleaned)
+        : 'default';
+      if (contentType !== 'default') {
+        logger.info('pipeline', `Auto-format: detected ${contentType}`);
+      }
 
       if (existingFieldText) {
         logger.info('pipeline', `Existing field text: "${existingFieldText.substring(0, 80)}..."`);
@@ -266,16 +300,22 @@ export async function runPipeline(
           windowContext: windowContextStr,
           vocabularyList,
           customPrompt,
+          appProfilePrompt: profilePrompt,
           existingFieldText,
           existingFieldTextAfter: appState.existingFieldTextAfter || '',
           projectContext,
           tone,
+          contentType,
         });
 
         refinedText = sanitizeRefinedOutput(refinedText);
 
         if (refinedText === 'EMPTY' || !refinedText) {
           logger.info('pipeline', 'LLM returned EMPTY, skipping insertion');
+          // Remove anything we optimistically injected for instant feedback.
+          if (injectedText) {
+            await inserter.replaceLiveText('', Array.from(injectedText).length, appState.sourceApp);
+          }
           appState.setState(EchoState.Idle);
           return;
         }
@@ -312,13 +352,19 @@ export async function runPipeline(
     // 4. Insert refined text
     appState.setState(EchoState.Inserting);
 
-    if (liveInjectedText) {
-      logger.info('pipeline', `Inserting: "${refinedText}"`);
-      await inserter.replaceLiveText(refinedText, liveInjectedText.length, appState.sourceApp);
+    if (injectedText) {
+      // Replace the text already on screen (live or instant-insert) with the
+      // refined version. Skip the round trip if it would be a no-op.
+      const finalText = continuationBefore ? joinContinuation(continuationBefore, refinedText) : refinedText;
+      if (finalText !== injectedText) {
+        logger.info('pipeline', `Inserting: "${finalText}"`);
+        await inserter.replaceLiveText(finalText, Array.from(injectedText).length, appState.sourceApp);
+      } else {
+        logger.info('pipeline', 'Refined text matches what is already inserted — leaving as-is');
+      }
     } else {
-      // Continue from the caret: fix spacing/capitalization so dictation flows
-      // into existing text mid-sentence. Deterministic, so it works even when no
-      // LLM is configured (the fastest, fully-free path).
+      // Nothing on screen yet (no LLM and no live text): fresh insert, continuing
+      // from the caret. Deterministic, so it works even with no LLM configured.
       const before = appState.existingFieldText || '';
       const textToInsert = before ? joinContinuation(before, refinedText) : refinedText;
       logger.info('pipeline', `Inserting: "${textToInsert}"`);

@@ -1,15 +1,15 @@
 import { getSetting } from '../settings/settings';
 
-export type AppProfile = 'coding' | 'prose' | 'chat' | 'default';
+export type AppProfile = 'coding' | 'shell' | 'prose' | 'chat' | 'default';
 
 const APP_PROFILE_MAP: Record<string, AppProfile> = {
   'Visual Studio Code': 'coding',
   'Code': 'coding',
   'Cursor': 'coding',
   'Xcode': 'coding',
-  'iTerm2': 'coding',
-  'Terminal': 'coding',
-  'Warp': 'coding',
+  'iTerm2': 'shell',
+  'Terminal': 'shell',
+  'Warp': 'shell',
   'Notion': 'prose',
   'Google Chrome': 'prose',
   'Safari': 'prose',
@@ -23,6 +23,7 @@ const APP_PROFILE_MAP: Record<string, AppProfile> = {
 
 const PROFILE_PROMPTS: Record<AppProfile, string> = {
   coding: `You are refining speech for a code editor. Preserve technical terms, variable names, and function names exactly. Use backticks for code identifiers when appropriate. Do not add prose formatting.`,
+  shell: `You are refining speech dictated into a terminal/shell. Preserve command syntax exactly: flags (-rf, --version), pipes (|), redirects (> and >>), environment variables ($VAR), file paths, and backticks. Keep it terse — do not add prose, sentence punctuation, or capitalization that would break a command.`,
   prose: `You are refining speech for a document editor. Use proper grammar, punctuation, and paragraph structure. Capitalize sentences correctly.`,
   chat: `You are refining speech for a chat/messaging app. Keep the tone casual and conversational. Omit trailing periods on short messages unless clearly a full sentence.`,
   default: '',
@@ -47,6 +48,7 @@ export function getProfilePrompt(appName: string | null): string {
 export function getAppProfileOptions(): { id: AppProfile; label: string }[] {
   return [
     { id: 'coding', label: 'Coding (preserve technical terms)' },
+    { id: 'shell', label: 'Shell (preserve command syntax)' },
     { id: 'prose', label: 'Prose (formal writing)' },
     { id: 'chat', label: 'Chat (casual messaging)' },
     { id: 'default', label: 'Default' },

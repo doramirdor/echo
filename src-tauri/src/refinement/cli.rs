@@ -5,7 +5,6 @@ pub async fn refine(
     command: &str,
     raw: &str,
     system_prompt: &str,
-    project_context: Option<&str>,
 ) -> Result<String, String> {
     let extra_path = format!(
         "{}:{}/.local/bin:/opt/homebrew/bin:/usr/local/bin",
@@ -13,11 +12,7 @@ pub async fn refine(
         dirs::home_dir().unwrap_or_default().display()
     );
 
-    let project_part = project_context
-        .map(|pc| format!("\nProject context (use this to fix technical terms and names):\n{}\n", pc))
-        .unwrap_or_default();
-
-    let full_prompt = format!("{}{}\nRaw transcription:\n{}", system_prompt, project_part, raw);
+    let full_prompt = format!("{}\nRaw transcription:\n{}", system_prompt, raw);
 
     let cmd_line = if command == "claude" {
         format!("{} -p --model haiku", command)

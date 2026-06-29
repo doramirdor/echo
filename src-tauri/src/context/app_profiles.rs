@@ -11,7 +11,8 @@ pub fn get_profile_prompt(app_name: Option<&str>, overrides: &HashMap<String, St
     }
 
     let profile = match name {
-        "Visual Studio Code" | "Code" | "Cursor" | "Xcode" | "iTerm2" | "Terminal" | "Warp" => "coding",
+        "Visual Studio Code" | "Code" | "Cursor" | "Xcode" => "coding",
+        "iTerm2" | "Terminal" | "Warp" => "shell",
         "Notion" | "Google Chrome" | "Safari" | "Pages" | "Microsoft Word" => "prose",
         "Slack" | "Messages" | "Discord" | "Telegram" => "chat",
         _ => "default",
@@ -23,6 +24,7 @@ pub fn get_profile_prompt(app_name: Option<&str>, overrides: &HashMap<String, St
 fn profile_prompt(profile: &str) -> String {
     match profile {
         "coding" => "You are refining speech for a code editor. Preserve technical terms, variable names, and function names exactly. Use backticks for code identifiers when appropriate. Do not add prose formatting.".into(),
+        "shell" => "You are refining speech dictated into a terminal/shell. Preserve command syntax exactly: flags (-rf, --version), pipes (|), redirects (> and >>), environment variables ($VAR), file paths, and backticks. Keep it terse — do not add prose, sentence punctuation, or capitalization that would break a command.".into(),
         "prose" => "You are refining speech for a document editor. Use proper grammar, punctuation, and paragraph structure. Capitalize sentences correctly.".into(),
         "chat" => "You are refining speech for a chat/messaging app. Keep the tone casual and conversational. Omit trailing periods on short messages unless clearly a full sentence.".into(),
         _ => String::new(),

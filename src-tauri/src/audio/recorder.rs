@@ -258,6 +258,54 @@ impl AudioRecorder {
         }
     }
 
+    /// Compress the cleaned WAV before uploading to a cloud STT engine, to cut
+    /// upload bytes. Mirrors AudioRecorder.encodeForUpload in
+    /// src/main/audio/recorder.ts. Controlled by ECHO_STT_UPLOAD_FORMAT
+    /// (default "flac"); falls back to the original WAV on any error.
+    pub fn encode_for_upload(wav_path: &std::path::Path) -> PathBuf {
+        let fmt = std::env::var("ECHO_STT_UPLOAD_FORMAT")
+            .unwrap_or_else(|_| "flac".into())
+            .to_lowercase();
+        if fmt == "wav" {
+            return wav_path.to_path_buf();
+        }
+        if !["flac", "ogg", "opus"].contains(&fmt.as_str()) {
+            log::warn!("[recorder] Unknown ECHO_STT_UPLOAD_FORMAT=\"{}\", uploading wav", fmt);
+            return wav_path.to_path_buf();
+        }
+
+        let out_path = wav_path.with_extension(&fmt);
+        let input_str = wav_path.to_str().unwrap_or("");
+        let out_str = out_path.to_str().unwrap_or("");
+
+        // FLAC: -C 8 = max lossless compression. OGG (Vorbis): -C 4 ≈ quality 4.
+        let mut args: Vec<&str> = vec![input_str];
+        match fmt.as_str() {
+            "flac" => args.extend_from_slice(&["-C", "8"]),
+            "ogg" => args.extend_from_slice(&["-C", "4"]),
+            _ => {}
+        }
+        args.push(out_str);
+
+        let start = std::time::Instant::now();
+        match std::process::Command::new("sox").args(&args).output() {
+            Ok(output) if output.status.success() => {
+                let before = std::fs::metadata(wav_path).map(|m| m.len()).unwrap_or(0);
+                let after = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+                let pct = if before > 0 { 100.0 * (1.0 - after as f64 / before as f64) } else { 0.0 };
+                log::info!(
+                    "[recorder] Upload encode {}: {}KB → {}KB (-{:.0}%, {}ms)",
+                    fmt, before / 1024, after / 1024, pct, start.elapsed().as_millis()
+                );
+                out_path
+            }
+            _ => {
+                log::warn!("[recorder] Upload encode to {} failed, using wav", fmt);
+                wav_path.to_path_buf()
+            }
+        }
+    }
+
     pub fn check_dependencies() -> (bool, String) {
         match std::process::Command::new("which").arg("rec").output() {
             Ok(output) if output.status.success() => (true, "sox is installed".into()),

@@ -30,6 +30,8 @@ export class BedrockRefiner implements LLMRefiner {
 
   async refine(rawTranscription: string, context: RefinementContext): Promise<string> {
     const systemPrompt = buildSystemPrompt(context.memoryFormatted, {
+      appProfilePrompt: context.appProfilePrompt,
+      contentType: context.contentType,
       customPrompt: context.customPrompt,
       windowContext: context.windowContext,
       vocabularyList: context.vocabularyList,

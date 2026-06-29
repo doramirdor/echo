@@ -67,7 +67,10 @@ Layered on top of the base pipeline to make recognition accurate and natural —
 - **Caret-aware sentence continuation** — `scripts/field-context.swift` reads the text before/after the caret via the Accessibility API; `joinContinuation()` (`insertion/continuation.ts`) fixes spacing/capitalization so dictation continues mid-sentence. Deterministic, so it works even with `llmProvider: none`.
 - **Project jargon** — `CodebaseAnalyzer` context feeds both STT biasing and every refiner via `RefinementContext.projectContext`.
 - **Accent/dialect** — `transcriptionLanguage` is honored by every engine; the default refiner prompt is instructed to preserve the speaker's dialect/spelling (don't Americanize).
-- Speed defaults: whisper runs multi-threaded with `ggml-base.en.bin`; the second grammar-validation pass is **off** by default.
+- **Content-aware auto-formatting** — `detectContentType()` (`refinement/refiner.ts` ↔ `detect_content_type` in `refiner.rs`) heuristically classifies dictation as list/email/paragraph and appends a per-type formatting section to the prompt. Gated by the `autoFormatContent` setting (default on) and only for a fresh field (not mid-sentence continuation).
+- **App profiles are additive** — per-app profile prompts (coding/shell/prose/chat) are passed as `appProfilePrompt` and *appended* to the base prompt, NOT used as the base (a user `customPrompt` still replaces the base). This keeps the default rules (self-correction, filler removal, EMPTY sentinel) active in every app.
+- **Instant insert** — on stop, if nothing was injected live, the raw transcript is inserted immediately and then replaced with the refined text via `replaceLiveText` once refinement lands (Wispr-style "see text now, it polishes itself").
+- Speed defaults: whisper runs multi-threaded (`-t` = cores−1) with `ggml-base.en.bin`; the second grammar-validation pass is **on** by default in both trees (accuracy/zero-edit parity — toggle with the `grammarCheck` setting).
 
 ## Recording trigger & state
 

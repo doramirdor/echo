@@ -7,6 +7,7 @@ pub async fn transcribe_with_confidence(
     model: &str,
     wav_path: &Path,
     language: &str,
+    prompt: &str,
 ) -> Result<TranscriptionResult, String> {
     let file_bytes = std::fs::read(wav_path).map_err(|e| format!("Read audio: {}", e))?;
     let file_name = wav_path.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -18,6 +19,10 @@ pub async fn transcribe_with_confidence(
 
     if !language.is_empty() && language != "auto" {
         form = form.text("language", language.to_string());
+    }
+    // Prior-context biasing toward the user's vocabulary/jargon.
+    if !prompt.is_empty() {
+        form = form.text("prompt", prompt.to_string());
     }
 
     let client = reqwest::Client::new();

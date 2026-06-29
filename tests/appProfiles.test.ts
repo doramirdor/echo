@@ -34,4 +34,16 @@ describe('appProfiles', () => {
     const prompt = getProfilePrompt('Cursor');
     expect(prompt).toContain('code editor');
   });
+
+  it('detects shell profile for terminals', () => {
+    expect(detectAppProfile('Terminal')).toBe('shell');
+    expect(detectAppProfile('iTerm2')).toBe('shell');
+    expect(detectAppProfile('Warp')).toBe('shell');
+  });
+
+  it('returns a shell prompt that preserves command syntax', () => {
+    const prompt = getProfilePrompt('Terminal');
+    expect(prompt.toLowerCase()).toContain('terminal');
+    expect(prompt.toLowerCase()).toContain('command syntax');
+  });
 });

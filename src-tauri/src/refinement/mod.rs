@@ -16,8 +16,13 @@ pub struct RefinementContext {
     pub window_context: Option<String>,
     pub vocabulary_list: Option<String>,
     pub custom_prompt: Option<String>,
+    /// Per-app hint, ADDED to (not replacing) the base prompt.
+    pub app_profile_prompt: Option<String>,
     pub existing_field_text: Option<String>,
+    pub existing_field_text_after: Option<String>,
     pub tone: Option<String>,
+    /// Detected content type for auto-formatting ("list" | "email" | "paragraph").
+    pub content_type: Option<String>,
 }
 
 pub async fn refine(
@@ -26,12 +31,14 @@ pub async fn refine(
     ctx: &RefinementContext,
     settings: &crate::settings::SettingsStore,
 ) -> Result<String, String> {
-    let system_prompt = refiner::build_system_prompt(&ctx.memory_formatted, ctx);
+    // Project jargon scanned from the user's codebase — folded into the system
+    // prompt so EVERY provider (not just the CLI) biases spelling toward it.
     let project_context = crate::codebase::analyzer::load_context();
+    let system_prompt = refiner::build_system_prompt(&ctx.memory_formatted, ctx, project_context.as_deref());
 
     match provider {
-        "claude-cli" => cli::refine("claude", raw, &system_prompt, project_context.as_deref()).await,
-        "codex-cli" => cli::refine("codex", raw, &system_prompt, project_context.as_deref()).await,
+        "claude-cli" => cli::refine("claude", raw, &system_prompt).await,
+        "codex-cli" => cli::refine("codex", raw, &system_prompt).await,
         "claude-api" => {
             let key = settings.get(|s| s.claude_api_key.clone());
             let model = settings.get(|s| s.claude_api_model.clone());

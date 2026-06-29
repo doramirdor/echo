@@ -1,7 +1,7 @@
 use std::path::Path;
 use reqwest::multipart;
 
-pub async fn transcribe(api_key: &str, wav_path: &Path) -> Result<String, String> {
+pub async fn transcribe(api_key: &str, wav_path: &Path, prompt: &str, language: &str) -> Result<String, String> {
     let file_bytes = std::fs::read(wav_path)
         .map_err(|e| format!("Read audio file: {}", e))?;
     let file_name = wav_path.file_name()
@@ -9,15 +9,20 @@ pub async fn transcribe(api_key: &str, wav_path: &Path) -> Result<String, String
         .to_string_lossy()
         .to_string();
 
-    let form = multipart::Form::new()
+    let lang = if language.is_empty() { "en" } else { language };
+    let mut form = multipart::Form::new()
         .part("file", multipart::Part::bytes(file_bytes)
             .file_name(file_name)
             .mime_str("audio/wav")
             .unwrap())
         .text("model", "whisper-large-v3-turbo")
-        .text("language", "en")
+        .text("language", lang.to_string())
         .text("temperature", "0")
         .text("response_format", "verbose_json");
+    // Prior-context biasing toward the user's vocabulary/jargon.
+    if !prompt.is_empty() {
+        form = form.text("prompt", prompt.to_string());
+    }
 
     let client = reqwest::Client::new();
     let response = client
@@ -29,7 +34,7 @@ pub async fn transcribe(api_key: &str, wav_path: &Path) -> Result<String, String
         .await
         .map_err(|e| {
             log::warn!("[groq] Fetch error, trying curl fallback: {}", e);
-            transcribe_with_curl(api_key, wav_path).unwrap_or_else(|e2| format!("Both fetch and curl failed: {}", e2))
+            transcribe_with_curl(api_key, wav_path, prompt, lang).unwrap_or_else(|e2| format!("Both fetch and curl failed: {}", e2))
         })?;
 
     if !response.status().is_success() {
@@ -45,21 +50,26 @@ pub async fn transcribe(api_key: &str, wav_path: &Path) -> Result<String, String
     Ok(text)
 }
 
-fn transcribe_with_curl(api_key: &str, wav_path: &Path) -> Result<String, String> {
+fn transcribe_with_curl(api_key: &str, wav_path: &Path, prompt: &str, language: &str) -> Result<String, String> {
     log::info!("[groq] Falling back to curl --http2");
+    let mut args: Vec<String> = vec![
+        "--silent".into(), "--show-error".into(), "--fail".into(), "--http2".into(),
+        "--max-time".into(), "20".into(),
+        "-X".into(), "POST".into(),
+        "https://api.groq.com/openai/v1/audio/transcriptions".into(),
+        "-H".into(), format!("Authorization: Bearer {}", api_key),
+        "-F".into(), format!("file=@{}", wav_path.to_str().unwrap_or("")),
+        "-F".into(), "model=whisper-large-v3-turbo".into(),
+        "-F".into(), format!("language={}", language),
+        "-F".into(), "temperature=0".into(),
+        "-F".into(), "response_format=verbose_json".into(),
+    ];
+    if !prompt.is_empty() {
+        args.push("-F".into());
+        args.push(format!("prompt={}", prompt));
+    }
     let output = std::process::Command::new("curl")
-        .args([
-            "--silent", "--show-error", "--fail", "--http2",
-            "--max-time", "20",
-            "-X", "POST",
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            "-H", &format!("Authorization: Bearer {}", api_key),
-            "-F", &format!("file=@{}", wav_path.to_str().unwrap_or("")),
-            "-F", "model=whisper-large-v3-turbo",
-            "-F", "language=en",
-            "-F", "temperature=0",
-            "-F", "response_format=verbose_json",
-        ])
+        .args(&args)
         .output()
         .map_err(|e| format!("curl failed: {}", e))?;
 

@@ -23,6 +23,8 @@ export class CLIRefiner implements LLMRefiner {
     const projectContext = context.projectContext ?? CodebaseAnalyzer.loadContext() ?? undefined;
 
     const systemPrompt = buildSystemPrompt(context.memoryFormatted, {
+      appProfilePrompt: context.appProfilePrompt,
+      contentType: context.contentType,
       customPrompt: context.customPrompt,
       windowContext: context.windowContext,
       vocabularyList: context.vocabularyList,
