@@ -10,15 +10,15 @@
 </p>
 
 <p align="center">
-  <a href="https://doramirdor.github.io/echo/"><img src="https://img.shields.io/badge/website-echo-0A84FF?style=flat-square" alt="Website"></a>
+  <a href="https://doramirdor.github.io/echo-tauri/"><img src="https://img.shields.io/badge/website-echo-0A84FF?style=flat-square" alt="Website"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/platform-macOS-black?style=flat-square&logo=apple" alt="macOS">
-  <a href="https://github.com/doramirdor/echo/actions"><img src="https://img.shields.io/github/actions/workflow/status/doramirdor/echo/ci.yml?style=flat-square" alt="CI"></a>
+  <a href="https://github.com/doramirdor/echo-tauri/actions"><img src="https://img.shields.io/github/actions/workflow/status/doramirdor/echo-tauri/ci.yml?style=flat-square" alt="CI"></a>
   <img src="https://img.shields.io/badge/runs-100%25%20local-22c55e?style=flat-square" alt="100% local">
 </p>
 
 <p align="center">
-  <a href="https://doramirdor.github.io/echo/">Website</a> ·
+  <a href="https://doramirdor.github.io/echo-tauri/">Website</a> ·
   <a href="docs/USER_GUIDE.md">User Guide</a> ·
   <a href="docs/PRIVACY.md">Privacy</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -86,7 +86,7 @@ are needed to build whisper.cpp — the onboarding wizard handles this automatic
 
 ```bash
 brew install sox
-git clone https://github.com/doramirdor/echo.git
+git clone https://github.com/doramirdor/echo-tauri.git
 cd echo
 npm install
 npm start

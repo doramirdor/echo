@@ -7,8 +7,8 @@ welcome — from typo fixes to new transcription engines.
 ## Before you start
 
 - **Be respectful.** This project follows the [Code of Conduct](CODE_OF_CONDUCT.md).
-- **Search first.** Check existing [issues](https://github.com/doramirdor/echo/issues)
-  and [pull requests](https://github.com/doramirdor/echo/pulls) before opening a new one.
+- **Search first.** Check existing [issues](https://github.com/doramirdor/echo-tauri/issues)
+  and [pull requests](https://github.com/doramirdor/echo-tauri/pulls) before opening a new one.
 - **Open an issue for big changes.** For anything beyond a small fix, file an issue
   to discuss the approach before investing a lot of time.
 
