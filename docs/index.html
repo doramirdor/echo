@@ -3,12 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Echo — Speech to text for stronger Claude workflows</title>
+  <title>Echo: Speech to text for stronger Claude workflows</title>
   <meta name="description" content="Echo turns your voice into clean, refined text you can bring into Claude and any app. A free, open-source, privacy-first voice keyboard for macOS that runs on your Mac." />
   <meta name="theme-color" content="#ffffff" />
 
-  <!-- Open Graph -->
-  <meta property="og:title" content="Echo — Speech to text for stronger Claude workflows" />
+  <meta property="og:title" content="Echo: Speech to text for stronger Claude workflows" />
   <meta property="og:description" content="Turn your voice into clean, refined text for Claude and every app. Free, open source, 100% local." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://doramirdor.github.io/echo/" />
@@ -25,32 +24,24 @@
     <div class="nav__inner container">
       <a class="brand" href="#top" aria-label="Echo home">
         <span class="brand__mark" aria-hidden="true">
-          <svg viewBox="0 0 28 28" fill="none" aria-hidden="true">
-            <rect x="2"  y="10" width="3.2" height="8"  rx="1.6" fill="currentColor"/>
-            <rect x="7.4" y="6" width="3.2" height="16" rx="1.6" fill="currentColor"/>
-            <rect x="12.8" y="2.5" width="3.2" height="23" rx="1.6" fill="currentColor"/>
-            <rect x="18.2" y="7" width="3.2" height="14" rx="1.6" fill="currentColor"/>
-            <rect x="23.4" y="11" width="3.2" height="6" rx="1.6" fill="currentColor"/>
-          </svg>
-        </span>
+          <svg viewBox="0 0 28 28" fill="none"><rect x="2" y="10" width="3.2" height="8" rx="1.6" fill="currentColor"/><rect x="7.4" y="6" width="3.2" height="16" rx="1.6" fill="currentColor"/><rect x="12.8" y="2.5" width="3.2" height="23" rx="1.6" fill="currentColor"/><rect x="18.2" y="7" width="3.2" height="14" rx="1.6" fill="currentColor"/><rect x="23.4" y="11" width="3.2" height="6" rx="1.6" fill="currentColor"/></svg>
+      </span>
         <span class="brand__name">Echo</span>
       </a>
       <nav class="nav__links" aria-label="Primary">
         <a href="#features">Features</a>
         <a href="#how">How it works</a>
+        <a href="#workflows">Workflows</a>
         <a href="#opensource">Open source</a>
-        <a href="#developers">For developers</a>
       </nav>
       <div class="nav__actions">
         <a class="ghlink" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener" aria-label="Echo on GitHub">
           <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
           <span>Star</span>
         </a>
-        <a class="btn btn--primary btn--sm" href="#get">Get started — free</a>
+        <a class="btn btn--primary btn--sm" href="#get">Get started for free</a>
       </div>
-      <button class="nav__toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
-        <span></span><span></span>
-      </button>
+      <button class="nav__toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false"><span></span><span></span></button>
     </div>
   </header>
 
@@ -60,96 +51,75 @@
       <div class="hero__glow" aria-hidden="true"></div>
       <div class="container hero__inner">
         <div class="hero__copy">
-          <a class="eyebrow" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">
-            <span class="dot"></span> Free &amp; open source
-          </a>
+          <span class="eyebrow"><span class="dot"></span> Free &amp; open source</span>
           <h1 class="hero__title">Speech to text for stronger <span class="grad">Claude</span> workflows.</h1>
           <p class="hero__sub">
-            Echo turns your voice into clean, refined text — ready to drop into Claude,
-            your editor, your inbox, anywhere. Press a key, talk, and it lands polished.
-            Open source, privacy-first, and it all runs on your Mac.
+            Echo turns your voice into clean, refined text: transcripts and structured
+            context you can bring straight into Claude and any app. Open source,
+            privacy-first, built for builders.
           </p>
           <div class="hero__cta">
-            <a class="btn btn--primary btn--lg" href="#get">Get started — free
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+            <a class="btn btn--primary btn--lg" href="#get">Get started for free
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
             </a>
             <a class="btn btn--ghost btn--lg" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">
-              <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+              <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
               View on GitHub
             </a>
           </div>
           <ul class="hero__trust" aria-label="Highlights">
-            <li><span class="tick" aria-hidden="true"></span> Open source</li>
-            <li><span class="tick" aria-hidden="true"></span> 100% local</li>
-            <li><span class="tick" aria-hidden="true"></span> Privacy first</li>
+            <li><span class="tick"></span> Open source</li>
+            <li><span class="tick"></span> Runs on your Mac</li>
+            <li><span class="tick"></span> Privacy first</li>
           </ul>
         </div>
 
-        <!-- Product visual: animated dictation demo + mascot -->
-        <div class="hero__visual reveal">
-          <div class="demo" id="demo">
-            <div class="demo__pill" aria-hidden="true">
+        <!-- Product card: transcript window + mascot -->
+        <div class="hero__visual">
+          <div class="appcard reveal" id="demo">
+            <div class="appcard__tabs">
+              <span class="apptab is-active" id="demoStatus">Transcript</span>
+              <span class="apptab">Refined</span>
+              <span class="apptab">Export to Claude</span>
+              <span class="appcard__mic" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0012 0M12 17v3"/></svg>
+              </span>
+            </div>
+            <div class="appcard__head">
+              <span class="appcard__doc" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></svg>
+              </span>
+              <div>
+                <strong>Voice note → refined</strong>
+                <small>Today · dictated with Echo</small>
+              </div>
+              <button class="appcard__copy" type="button">Copy</button>
+            </div>
+            <div class="appcard__search" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+              <span>Search transcript…</span>
+            </div>
+            <div class="msglist">
+              <div class="msg msg--raw" id="demoCardBefore">
+                <span class="msg__av msg__av--you">Y</span>
+                <div class="msg__body"><span class="msg__tag">You said</span><p id="demoBefore">um so like can you send the the report to sarah by uh end of day and lemme know if the api keys are still valid thanks</p></div>
+              </div>
+              <div class="msg msg--clean" id="demoCardAfter">
+                <span class="msg__av msg__av--echo" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><rect x="3" y="11" width="2.6" height="6" rx="1.3" fill="currentColor"/><rect x="7.4" y="8" width="2.6" height="12" rx="1.3" fill="currentColor"/><rect x="11.7" y="5" width="2.6" height="18" rx="1.3" fill="currentColor"/><rect x="16" y="8.5" width="2.6" height="11" rx="1.3" fill="currentColor"/><rect x="20.3" y="11" width="2.6" height="6" rx="1.3" fill="currentColor"/></svg></span>
+                <div class="msg__body"><span class="msg__tag msg__tag--accent">Echo refined</span><p id="demoAfter">Can you send the report to Sarah by end of day? And let me know if the API keys are still valid. Thanks!</p></div>
+              </div>
+            </div>
+            <div class="appcard__player" aria-hidden="true">
               <span class="demo__rec" id="demoRec"></span>
-              <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-              <span class="demo__pilltext" id="demoStatus">Listening…</span>
+              <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <span class="appcard__time">0:08</span>
             </div>
-            <figure class="demo__card demo__card--before" id="demoCardBefore">
-              <figcaption><span class="tag">You say</span></figcaption>
-              <p id="demoBefore">um so like can you send the the report to sarah by uh end of day and lemme know if the api keys are still valid thanks</p>
-            </figure>
-            <div class="demo__arrow" id="demoArrow" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="5 12 12 19 19 12"></polyline></svg>
-            </div>
-            <figure class="demo__card demo__card--after" id="demoCardAfter">
-              <figcaption><span class="tag tag--accent">Echo types</span></figcaption>
-              <p id="demoAfter">Can you send the report to Sarah by end of day? And let me know if the API keys are still valid. Thanks!</p>
-            </figure>
           </div>
           <div class="mascot mascot--wave" aria-hidden="true"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== STATS / TRUST BAR ===== -->
-    <section class="stats container">
-      <div class="stat reveal">
-        <span class="stat__num"><span data-count="200" data-suffix="">200</span></span>
-        <span class="stat__label">words/min, spoken</span>
-      </div>
-      <div class="stat reveal">
-        <span class="stat__num">$0</span>
-        <span class="stat__label">free, forever</span>
-      </div>
-      <div class="stat reveal">
-        <span class="stat__num"><span data-count="100" data-suffix="%">100%</span></span>
-        <span class="stat__label">runs on your Mac</span>
-      </div>
-      <div class="stat reveal">
-        <span class="stat__num">MIT</span>
-        <span class="stat__label">open source</span>
-      </div>
-    </section>
-
-    <!-- ===== WORKS EVERYWHERE ===== -->
-    <section class="everywhere container">
-      <p class="kicker">Works everywhere you write</p>
-      <h2 class="section__title">One hotkey. Every app.</h2>
-      <p class="section__lead">
-        Echo types into whatever window is focused — Claude, your editor, your inbox,
-        your chat. If you can type there, you can talk there.
-      </p>
-      <div class="marquee" aria-label="Example apps">
-        <div class="marquee__track">
-          <ul class="chips">
-            <li>Claude</li><li>VS Code</li><li>Slack</li><li>Mail</li>
-            <li>Notion</li><li>Google Docs</li><li>Terminal</li><li>Linear</li>
-            <li>Figma</li><li>ChatGPT</li><li>Safari</li><li>Notes</li>
-          </ul>
-          <ul class="chips" aria-hidden="true">
-            <li>Claude</li><li>VS Code</li><li>Slack</li><li>Mail</li>
-            <li>Notion</li><li>Google Docs</li><li>Terminal</li><li>Linear</li>
-            <li>Figma</li><li>ChatGPT</li><li>Safari</li><li>Notes</li>
-          </ul>
+          <div class="floatnote" aria-hidden="true">
+            <span class="floatnote__lock"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span>
+            <span><strong>100% private.</strong> Your audio never leaves your Mac.</span>
+          </div>
         </div>
       </div>
     </section>
@@ -157,74 +127,85 @@
     <!-- ===== FEATURES ===== -->
     <section class="features" id="features">
       <div class="container">
-        <p class="kicker">Features</p>
-        <h2 class="section__title">Everything you need <span class="grad">after you speak</span>.</h2>
-        <p class="section__lead">Accurate, natural, and private — no paid services required.</p>
+        <div class="sec-head">
+          <span class="pill"><span class="pill__sq"></span> Built for Claude workflows</span>
+          <h2 class="section__title">Everything you need <span class="grad">after you speak</span>.</h2>
+          <p class="section__lead">Echo turns your voice into accurate transcripts and clean, structured text you can use right away.</p>
+        </div>
+        <div class="mascot mascot--peek" aria-hidden="true"></div>
 
         <div class="grid">
           <article class="feature reveal">
-            <span class="feature__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg>
-            </span>
-            <h3>Local transcription</h3>
-            <p>Whisper runs on your Mac with no API key. Your voice never leaves the machine.</p>
+            <span class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg></span>
+            <h3>Transcribe accurately</h3>
+            <p>Local Whisper turns speech into text with punctuation. No API key, no upload.</p>
+            <div class="feature__preview">
+              <span class="fp-play"><svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+              <span class="fp-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
           </article>
+
           <article class="feature reveal">
-            <span class="feature__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z"/><path d="M19 14l.8 2 .2.8 2 .2-2 .2-.2 2-.8-2-2-.2 2-.2z"/></svg>
-            </span>
-            <h3>Refined with AI</h3>
-            <p>An LLM — Claude, Ollama, or local — fixes grammar, punctuation, and filler.</p>
+            <span class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/></svg></span>
+            <h3>Refine instantly</h3>
+            <p>An LLM fixes grammar, punctuation, and filler so dictation reads like you typed it.</p>
+            <div class="feature__preview fp-lines">
+              <span class="fpl"></span><span class="fpl"></span><span class="fpl fpl--ok"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> cleaned up</span>
+            </div>
           </article>
+
           <article class="feature reveal">
-            <span class="feature__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 00-4 10.5c.6.6 1 1.3 1 2.1h6c0-.8.4-1.5 1-2.1A6 6 0 0012 3z"/></svg>
-            </span>
+            <span class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 00-4 10.5c.6.6 1 1.3 1 2.1h6c0-.8.4-1.5 1-2.1A6 6 0 0012 3z"/></svg></span>
             <h3>Learns your jargon</h3>
             <p>Custom vocabulary, auto-learned corrections, and codebase scanning for your terms.</p>
+            <div class="feature__preview fp-chips"><span>run_pipeline</span><span>lib.rs</span><span>+ vocab</span></div>
           </article>
+
           <article class="feature reveal">
-            <span class="feature__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
-            </span>
-            <h3>Works in every app</h3>
-            <p>Text is typed straight into the focused window — Claude, editors, chat, docs.</p>
+            <span class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12l4 4v10a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z"/><path d="M8 12h6M8 16h8"/></svg></span>
+            <h3>Export to Claude</h3>
+            <p>Refined text lands at your cursor. Paste straight into Claude, your editor, anywhere.</p>
+            <div class="feature__preview fp-export"><span>Export to Claude</span><span class="fp-ready">Ready</span></div>
           </article>
+
           <article class="feature reveal">
-            <span class="feature__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 4 14 11 14 10 22 20 10 13 10 13 2"/></svg>
-            </span>
+            <span class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 4 14 11 14 10 22 20 10 13 10 13 2"/></svg></span>
             <h3>Live transcription</h3>
             <p>Text appears in real time as you speak, then is replaced by the polished version.</p>
+            <div class="feature__preview fp-search"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg><span>streaming…</span></div>
           </article>
+
           <article class="feature reveal">
-            <span class="feature__icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>
-            </span>
-            <h3>Private by design</h3>
-            <p>Run fully offline with local Whisper and no LLM — zero network calls, ever.</p>
+            <span class="feature__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span>
+            <h3>Privacy first</h3>
+            <p>Run fully offline with local Whisper and no LLM. Zero network calls, ever.</p>
+            <div class="feature__preview fp-private"><span class="fp-ready">100% private</span> data never leaves your Mac</div>
           </article>
         </div>
+
+        <p class="sec-foot"><span class="sec-foot__pill"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l2.9 6.3 6.9.7-5.2 4.6 1.5 6.8L12 17.8 5.9 20.4l1.5-6.8L2.2 9l6.9-.7z"/></svg> Open source · Self-hostable · <strong>MIT licensed</strong></span></p>
       </div>
     </section>
 
     <!-- ===== HOW IT WORKS ===== -->
     <section class="how" id="how">
       <div class="container">
-        <p class="kicker">Workflow</p>
-        <h2 class="section__title">How Echo works.</h2>
-        <p class="section__lead">From your voice to refined text in four steps — one keypress.</p>
+        <div class="sec-head sec-head--center">
+          <span class="pill"><span class="pill__sq"></span> Workflow</span>
+          <h2 class="section__title">How Echo works.</h2>
+          <p class="section__lead">From your voice to Claude-ready text in four simple steps, one keypress.</p>
+        </div>
 
         <ol class="steps">
           <li class="step reveal">
             <span class="step__num">1</span>
             <h3>Record</h3>
-            <p>Press <kbd>⌘⇧V</kbd> or hold <kbd>fn</kbd> and start talking.</p>
+            <p>Press <kbd>⌘⇧V</kbd> or hold <kbd>fn</kbd> and start talking, in any app.</p>
           </li>
           <li class="step reveal">
             <span class="step__num">2</span>
             <h3>Transcribe</h3>
-            <p>Speech becomes text via local Whisper, Groq, or macOS Speech.</p>
+            <p>Local Whisper converts speech to text with high accuracy.</p>
           </li>
           <li class="step reveal">
             <span class="step__num">3</span>
@@ -234,40 +215,69 @@
           <li class="step reveal">
             <span class="step__num">4</span>
             <h3>Insert</h3>
-            <p>The final text is typed at your cursor — right where you were.</p>
+            <p>Clean, structured text lands at your cursor, Claude-ready.</p>
           </li>
         </ol>
+
+        <div class="flow reveal" aria-hidden="true">
+          <div class="flow__node"><span class="flow__ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0012 0M12 17v3"/></svg></span><div><strong>Your voice</strong><small>spoken, in any app</small></div></div>
+          <span class="flow__arrow"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></span>
+          <div class="flow__node"><span class="flow__ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14M5 10h14M5 14h9M5 18h11"/></svg></span><div><strong>Raw transcript</strong><small>on-device Whisper</small></div></div>
+          <span class="flow__arrow"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></span>
+          <div class="flow__node"><span class="flow__ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/></svg></span><div><strong>Refined text</strong><small>grammar &amp; jargon fixed</small></div></div>
+          <span class="flow__arrow"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></span>
+          <div class="flow__node flow__node--accent"><span class="flow__ic flow__ic--accent"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span><div><strong>Claude-ready</strong><small>inserted at your cursor</small></div></div>
+        </div>
+        <p class="sec-foot">Private by design · your audio never leaves your Mac and is never used to train models.</p>
       </div>
     </section>
 
-    <!-- ===== FOR DEVELOPERS ===== -->
-    <section class="dev" id="developers">
-      <div class="container dev__inner">
-        <div class="dev__card reveal">
-<pre><code><span class="c-muted">// point Echo at your repo</span>
-<span class="c-key">scan</span> ~/code/echo
-
-<span class="c-muted">// now it knows your terms</span>
-"refactor the <span class="c-hl">run_pipeline</span> fn in <span class="c-hl">lib.rs</span>"
-"check <span class="c-hl">transcribeAudio</span> in <span class="c-hl">pipeline.ts</span>"
-
-<span class="c-ok">✓ transcribed exactly — no typos</span></code></pre>
+    <!-- ===== BUILT FOR WORKFLOWS ===== -->
+    <section class="workflows" id="workflows">
+      <div class="container workflows__inner">
+        <div class="appcard appcard--wide reveal">
+          <div class="appcard__tabs">
+            <span class="apptab is-active">Transcript</span>
+            <span class="apptab">Refined</span>
+            <span class="apptab">Export to Claude</span>
+          </div>
+          <div class="appcard__split">
+            <div class="appcard__main">
+              <div class="appcard__head">
+                <span class="appcard__doc"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></svg></span>
+                <div><strong>Standup note</strong><small>Today · dictated with Echo</small></div>
+              </div>
+              <div class="msglist">
+                <div class="msg msg--raw"><span class="msg__av msg__av--you">Y</span><div class="msg__body"><p>shipped the new refiner um and the tests r passing, gonna look at the bedrock thing next</p></div></div>
+                <div class="msg msg--clean"><span class="msg__av msg__av--echo"><svg viewBox="0 0 28 28" fill="none"><rect x="3" y="11" width="2.6" height="6" rx="1.3" fill="currentColor"/><rect x="7.4" y="8" width="2.6" height="12" rx="1.3" fill="currentColor"/><rect x="11.7" y="5" width="2.6" height="18" rx="1.3" fill="currentColor"/><rect x="16" y="8.5" width="2.6" height="11" rx="1.3" fill="currentColor"/><rect x="20.3" y="11" width="2.6" height="6" rx="1.3" fill="currentColor"/></svg></span><div class="msg__body"><p>Shipped the new refiner and the tests are passing. I'll look at the Bedrock integration next.</p></div></div>
+              </div>
+              <div class="appcard__player"><span class="demo__rec demo__rec--static"></span><span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="appcard__time">0:06</span></div>
+            </div>
+            <aside class="appcard__side">
+              <h4>Refinements</h4>
+              <ul class="sidelist">
+                <li><span class="sl-check"></span> Removed filler words</li>
+                <li><span class="sl-check"></span> Fixed punctuation &amp; casing</li>
+                <li><span class="sl-check"></span> “r” → “are”, “gonna” → “I'll”</li>
+                <li><span class="sl-check"></span> “bedrock” → “Bedrock”</li>
+              </ul>
+              <button class="btn btn--primary btn--full" type="button">Copy for Claude</button>
+            </aside>
+          </div>
         </div>
-        <div class="dev__text reveal">
-          <p class="kicker">For developers</p>
-          <h2 class="section__title">Dictate code and jargon — accurately.</h2>
-          <p class="section__lead">
-            Point Echo at a codebase and it learns your class names, function names,
-            and project vocabulary. Technical terms get biased into the transcriber
-            <em>before</em> the LLM runs, so <code>run_pipeline</code> never becomes
-            "run pipe line."
-          </p>
-          <ul class="checklist">
-            <li>Codebase scanning for project terminology</li>
-            <li>Custom vocabulary + auto-learned corrections</li>
-            <li>Caret-aware sentence continuation</li>
-            <li>Great context for Claude CLI &amp; API refinement</li>
+
+        <div class="workflows__text reveal">
+          <span class="pill"><span class="pill__sq"></span> Deep dive</span>
+          <h2 class="section__title">Built for serious voice <span class="grad">workflows</span>.</h2>
+          <p class="section__lead">Echo gives you control and structure, turning messy speech into clean, actionable text you can act on.</p>
+          <ul class="benefits">
+            <li><span class="benefit__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12l4 4v10a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z"/><path d="M8 12h6"/></svg></span><div><strong>Better context for Claude</strong><span>Clean, structured text you can paste straight into Claude.</span></div></li>
+            <li><span class="benefit__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 00-4 10.5c.6.6 1 1.3 1 2.1h6c0-.8.4-1.5 1-2.1A6 6 0 0012 3z"/><path d="M9 18h6"/></svg></span><div><strong>Learns your terminology</strong><span>Vocabulary, auto-corrections, and codebase jargon.</span></div></li>
+            <li><span class="benefit__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h7l2-3 3 6 2-3h4"/></svg></span><div><strong>Caret-aware continuation</strong><span>Picks up mid-sentence with correct spacing &amp; caps.</span></div></li>
+            <li><span class="benefit__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span><div><strong>Self-hosted &amp; private</strong><span>Runs on your Mac. Your data stays yours.</span></div></li>
+            <li><span class="benefit__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg></span><div><strong>Works in any app</strong><span>Inserts at your cursor in any macOS app.</span></div></li>
           </ul>
+          <a class="link-arrow" href="https://github.com/doramirdor/echo/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener">Explore the docs →</a>
         </div>
       </div>
     </section>
@@ -276,54 +286,61 @@
     <section class="oss" id="opensource">
       <div class="container oss__inner">
         <div class="oss__text reveal">
-          <p class="kicker">Open source &amp; local</p>
-          <h2 class="section__title">Yours to <span class="grad">own</span>.</h2>
-          <p class="section__lead">
-            Echo is free, open source, and privacy-first. Read the code, run it your way,
-            and keep your voice on your own machine — on your terms.
-          </p>
-          <ul class="checklist">
-            <li>MIT licensed — no account, no telemetry, no subscription</li>
-            <li>Runs fully on your Mac (cloud providers are opt-in)</li>
-            <li>Parallel TypeScript &amp; Rust implementations</li>
-          </ul>
-          <a class="btn btn--ghost" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">
-            <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-            Star on GitHub
-          </a>
+          <span class="pill"><span class="pill__sq"></span> Open source &amp; self-hosted</span>
+          <h2 class="section__title">Open source. Local. <span class="grad">Yours to own.</span></h2>
+          <p class="section__lead">Echo is free, open source, and privacy-first. Read the code, run it your way, and keep your voice on your own machine, on your terms.</p>
+          <div class="oss__stats">
+            <div><strong>$0</strong><span>free, forever</span></div>
+            <div><strong>100%</strong><span>runs on your Mac</span></div>
+            <div><strong>MIT</strong><span>licensed</span></div>
+            <div><strong>8</strong><span>LLM providers</span></div>
+          </div>
+          <div class="oss__cta">
+            <a class="btn btn--dark" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">
+              <svg viewBox="0 0 16 16" width="17" height="17" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+              Star on GitHub
+            </a>
+            <span class="oss__cta-note">Help us grow and build the best dictation experience.</span>
+          </div>
         </div>
+
         <div class="oss__visual reveal">
           <div class="codecard" id="get">
+            <div class="codecard__bar"><span class="cc-dot"></span><span class="cc-dot"></span><span class="cc-dot"></span><span class="codecard__title">bash</span></div>
             <button class="copy" id="copyBtn" aria-label="Copy install commands">Copy</button>
-<pre><code id="installCode">brew install sox
+<pre><code id="installCode"><span class="c-muted"># Clone the repository</span>
 git clone https://github.com/doramirdor/echo.git
 cd echo
+
+<span class="c-muted"># Install audio + deps, then launch</span>
+brew install sox
 npm install
-npm start</code></pre>
+npm start
+
+<span class="c-ok">✓ Echo is up and running!</span></code></pre>
           </div>
-          <div class="mascot mascot--card" aria-hidden="true"></div>
+          <ul class="oss__list">
+            <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v6c0 4.5-3.2 7-8 8-4.8-1-8-3.5-8-8V7z"/></svg></span><div><strong>MIT License</strong><span>Permissive and production-ready.</span></div></li>
+            <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 7 3 12 8 17"/><polyline points="16 7 21 12 16 17"/></svg></span><div><strong>Hackable</strong><span>Parallel TypeScript &amp; Rust implementations.</span></div></li>
+            <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span><div><strong>Self-hosted ready</strong><span>Runs on your Mac. Your data stays yours.</span></div></li>
+            <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.4"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 18c0-1.8 1-3.5 4-3.5"/></svg></span><div><strong>Community powered</strong><span>Built by contributors, for contributors.</span></div></li>
+          </ul>
         </div>
       </div>
     </section>
 
     <!-- ===== FINAL CTA ===== -->
     <section class="cta">
-      <div class="cta__glow" aria-hidden="true"></div>
-      <div class="container cta__inner">
-        <span class="brand__mark brand__mark--xl" aria-hidden="true">
-          <svg viewBox="0 0 28 28" fill="none" aria-hidden="true">
-            <rect x="2"  y="10" width="3.2" height="8"  rx="1.6" fill="currentColor"/>
-            <rect x="7.4" y="6" width="3.2" height="16" rx="1.6" fill="currentColor"/>
-            <rect x="12.8" y="2.5" width="3.2" height="23" rx="1.6" fill="currentColor"/>
-            <rect x="18.2" y="7" width="3.2" height="14" rx="1.6" fill="currentColor"/>
-            <rect x="23.4" y="11" width="3.2" height="6" rx="1.6" fill="currentColor"/>
-          </svg>
-        </span>
-        <h2 class="cta__title">Start capturing better context for <span class="grad">Claude</span>.</h2>
-        <p class="cta__lead">Free and open source. Clone it, run it, and never type a long message by hand again.</p>
-        <div class="hero__cta">
-          <a class="btn btn--primary btn--lg" href="#get">Get started — free</a>
-          <a class="btn btn--ghost btn--lg" href="https://github.com/doramirdor/echo/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener">Read the docs</a>
+      <div class="container">
+        <div class="cta__card">
+          <div class="cta__glow" aria-hidden="true"></div>
+          <span class="pill pill--onlt"><span class="pill__sq"></span> 100% open source</span>
+          <h2 class="cta__title">Start capturing better context for <span class="grad">Claude</span>.</h2>
+          <p class="cta__lead">Echo is the open-source voice keyboard built for builders who value clarity and privacy.</p>
+          <div class="hero__cta">
+            <a class="btn btn--primary btn--lg" href="#get">Get started for free</a>
+            <a class="btn btn--ghost btn--lg" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">View on GitHub</a>
+          </div>
         </div>
       </div>
     </section>
@@ -334,43 +351,50 @@ npm start</code></pre>
     <div class="container footer__inner">
       <div class="footer__brand">
         <a class="brand" href="#top">
-          <span class="brand__mark" aria-hidden="true">
-            <svg viewBox="0 0 28 28" fill="none" aria-hidden="true">
-              <rect x="2"  y="10" width="3.2" height="8"  rx="1.6" fill="currentColor"/>
-              <rect x="7.4" y="6" width="3.2" height="16" rx="1.6" fill="currentColor"/>
-              <rect x="12.8" y="2.5" width="3.2" height="23" rx="1.6" fill="currentColor"/>
-              <rect x="18.2" y="7" width="3.2" height="14" rx="1.6" fill="currentColor"/>
-              <rect x="23.4" y="11" width="3.2" height="6" rx="1.6" fill="currentColor"/>
-            </svg>
-          </span>
+          <span class="brand__mark" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><rect x="2" y="10" width="3.2" height="8" rx="1.6" fill="currentColor"/><rect x="7.4" y="6" width="3.2" height="16" rx="1.6" fill="currentColor"/><rect x="12.8" y="2.5" width="3.2" height="23" rx="1.6" fill="currentColor"/><rect x="18.2" y="7" width="3.2" height="14" rx="1.6" fill="currentColor"/><rect x="23.4" y="11" width="3.2" height="6" rx="1.6" fill="currentColor"/></svg></span>
           <span class="brand__name">Echo</span>
         </a>
-        <p>Speech to text for stronger Claude workflows. Free, open source, and 100% local.</p>
+        <p>Speech to text that delivers clean context and faster decisions.</p>
+        <div class="footer__badges"><span>MIT License</span><span>Privacy First</span></div>
       </div>
       <nav class="footer__cols" aria-label="Footer">
         <div>
           <h4>Product</h4>
           <a href="#features">Features</a>
           <a href="#how">How it works</a>
-          <a href="#developers">For developers</a>
+          <a href="#workflows">Workflows</a>
+          <a href="#opensource">Open source</a>
         </div>
         <div>
-          <h4>Project</h4>
-          <a href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">GitHub</a>
-          <a href="https://github.com/doramirdor/echo/releases" target="_blank" rel="noopener">Releases</a>
-          <a href="https://github.com/doramirdor/echo/issues" target="_blank" rel="noopener">Issues</a>
-        </div>
-        <div>
-          <h4>Docs</h4>
+          <h4>Resources</h4>
           <a href="https://github.com/doramirdor/echo/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener">User Guide</a>
           <a href="https://github.com/doramirdor/echo/blob/main/docs/PRIVACY.md" target="_blank" rel="noopener">Privacy</a>
+          <a href="https://github.com/doramirdor/echo/blob/main/CLAUDE.md" target="_blank" rel="noopener">Architecture</a>
           <a href="https://github.com/doramirdor/echo/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a>
+        </div>
+        <div>
+          <h4>Community</h4>
+          <a href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">GitHub ↗</a>
+          <a href="https://github.com/doramirdor/echo/issues" target="_blank" rel="noopener">Issues</a>
+          <a href="https://github.com/doramirdor/echo/discussions" target="_blank" rel="noopener">Discussions</a>
+          <a href="https://github.com/doramirdor/echo/releases" target="_blank" rel="noopener">Releases</a>
+        </div>
+        <div class="footer__loop">
+          <h4>Stay in the loop</h4>
+          <p>Get updates on new features and releases.</p>
+          <a class="footer__watch" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            Watch on GitHub
+          </a>
+          <div class="footer__social">
+            <a href="https://github.com/doramirdor/echo" target="_blank" rel="noopener" aria-label="GitHub"><svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>
+          </div>
         </div>
       </nav>
     </div>
     <div class="container footer__bottom">
       <span>© 2026 Echo · MIT License</span>
-      <span>Built for people who'd rather talk than type.</span>
+      <span>Built with ♥ for people who'd rather talk than type.</span>
     </div>
   </footer>
 
