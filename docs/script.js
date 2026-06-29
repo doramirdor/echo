@@ -45,14 +45,21 @@
     revealEls.forEach(function (el) { el.classList.add("is-in"); });
   }
 
-  /* ---------- Live transcript demo (typewriter loop) ---------- */
+  /* ---------- Live dictation demo (refined line types out) ---------- */
   var demo = document.getElementById("demo");
-  var before = document.getElementById("demoBefore");
   var after = document.getElementById("demoAfter");
-  var rawRow = document.getElementById("demoCardBefore");
-  var cleanRow = document.getElementById("demoCardAfter");
-  if (demo && before && after && rawRow && cleanRow && !prefersReduced && "IntersectionObserver" in window) {
-    var BEFORE_TEXT = before.textContent;
+  var out = document.getElementById("demoOut");
+  var timeEl = document.getElementById("demoTime");
+  var flowSvg = document.querySelector(".dictate__flow");
+
+  function fmtTime(s) { return "0:" + (s < 10 ? "0" : "") + s; }
+
+  if (demo && prefersReduced && flowSvg && flowSvg.pauseAnimations) {
+    // Hold a calm, fully readable still frame when motion is reduced.
+    try { flowSvg.pauseAnimations(); } catch (e) {}
+  }
+
+  if (demo && after && out && !prefersReduced && "IntersectionObserver" in window) {
     var AFTER_TEXT = after.textContent;
     var gen = 0;
 
@@ -73,17 +80,18 @@
       (async function () {
         var stop = function () { return my !== gen; };
         while (!stop()) {
-          before.textContent = ""; after.textContent = "";
-          rawRow.classList.remove("is-typing"); cleanRow.classList.remove("is-typing");
-          if (await sleep(650, stop)) return;
-          rawRow.classList.add("is-typing");
-          if (await type(before, BEFORE_TEXT, 26, stop)) return;
-          rawRow.classList.remove("is-typing");
-          if (await sleep(500, stop)) return;
-          cleanRow.classList.add("is-typing");
-          if (await type(after, AFTER_TEXT, 20, stop)) return;
-          cleanRow.classList.remove("is-typing");
-          if (await sleep(2800, stop)) return;
+          after.textContent = "";
+          out.classList.add("is-typing");
+          if (timeEl) timeEl.textContent = "0:00";
+          // Tick the recording timer while the line streams in.
+          var secs = 0, ticker = setInterval(function () {
+            if (timeEl) timeEl.textContent = fmtTime(++secs % 60);
+          }, 1000);
+          var aborted = await type(after, AFTER_TEXT, 30, stop);
+          clearInterval(ticker);
+          if (aborted) return;
+          out.classList.remove("is-typing");
+          if (await sleep(3200, stop)) return;
         }
       })();
     }
