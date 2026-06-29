@@ -76,43 +76,50 @@
 
         <!-- Product card: transcript window + mascot -->
         <div class="hero__visual">
-          <div class="appcard reveal" id="demo">
-            <div class="appcard__tabs">
-              <span class="apptab is-active" id="demoStatus">Transcript</span>
-              <span class="apptab">Refined</span>
-              <span class="apptab">Export to Claude</span>
-              <span class="appcard__mic" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0012 0M12 17v3"/></svg>
-              </span>
+          <div class="dictate reveal" id="demo">
+            <div class="dictate__top">
+              <span class="dictate__rec"><span class="dictate__recdot" id="demoRec"></span> Recording</span>
+              <span class="dictate__engine">Local Whisper · on-device</span>
+              <span class="dictate__time" id="demoTime">0:08</span>
             </div>
-            <div class="appcard__head">
-              <span class="appcard__doc" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></svg>
-              </span>
-              <div>
-                <strong>Voice note → refined</strong>
-                <small>Today · dictated with Echo</small>
+
+            <div class="dictate__stage">
+              <svg class="dictate__flow" viewBox="0 0 560 220" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                <defs>
+                  <path id="echoFlowPath" d="M -70 138 C 80 58, 182 70, 280 118 S 472 188, 632 104" fill="none"/>
+                  <linearGradient id="echoFlowFill" gradientUnits="userSpaceOnUse" x1="24" y1="0" x2="540" y2="0">
+                    <stop offset="0" stop-color="#b9b4d0"/>
+                    <stop offset="0.32" stop-color="#a7a1c2"/>
+                    <stop offset="0.55" stop-color="#1a1730"/>
+                    <stop offset="0.82" stop-color="#5b48d6"/>
+                    <stop offset="1" stop-color="#9b6cf2"/>
+                  </linearGradient>
+                </defs>
+                <text class="dictate__flowtext" fill="url(#echoFlowFill)">
+                  <textPath href="#echoFlowPath" startOffset="2%" id="echoFlowTextPath">can you send the report to Sarah by end of day and check if the API keys are still valid</textPath>
+                </text>
+                <circle class="dictate__spark" r="4.5" fill="#9b6cf2">
+                  <animate attributeName="opacity" dur="4.6s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;0.14;0.86;1"/>
+                  <animateMotion dur="4.6s" repeatCount="indefinite" keyPoints="0.12;0.92" keyTimes="0;1" calcMode="linear" rotate="auto">
+                    <mpath href="#echoFlowPath"/>
+                  </animateMotion>
+                </circle>
+              </svg>
+
+              <div class="dictate__capsule" aria-hidden="true">
+                <span class="wave wave--lg"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                <span class="dictate__mic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0012 0M12 17v3"/></svg></span>
               </div>
-              <button class="appcard__copy" type="button">Copy</button>
             </div>
-            <div class="appcard__search" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
-              <span>Search transcript…</span>
+
+            <div class="dictate__out" id="demoOut">
+              <span class="dictate__outtag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/></svg> Echo refined</span>
+              <p class="dictate__refined" id="demoAfter">Can you send the report to Sarah by end of day? And check if the API keys are still valid.</p>
             </div>
-            <div class="msglist">
-              <div class="msg msg--raw" id="demoCardBefore">
-                <span class="msg__av msg__av--you">Y</span>
-                <div class="msg__body"><span class="msg__tag">You said</span><p id="demoBefore">um so like can you send the the report to sarah by uh end of day and lemme know if the api keys are still valid thanks</p></div>
-              </div>
-              <div class="msg msg--clean" id="demoCardAfter">
-                <span class="msg__av msg__av--echo" aria-hidden="true"><svg viewBox="0 0 28 28" fill="none"><rect x="3" y="11" width="2.6" height="6" rx="1.3" fill="currentColor"/><rect x="7.4" y="8" width="2.6" height="12" rx="1.3" fill="currentColor"/><rect x="11.7" y="5" width="2.6" height="18" rx="1.3" fill="currentColor"/><rect x="16" y="8.5" width="2.6" height="11" rx="1.3" fill="currentColor"/><rect x="20.3" y="11" width="2.6" height="6" rx="1.3" fill="currentColor"/></svg></span>
-                <div class="msg__body"><span class="msg__tag msg__tag--accent">Echo refined</span><p id="demoAfter">Can you send the report to Sarah by end of day? And let me know if the API keys are still valid. Thanks!</p></div>
-              </div>
-            </div>
-            <div class="appcard__player" aria-hidden="true">
-              <span class="demo__rec" id="demoRec"></span>
-              <span class="wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-              <span class="appcard__time">0:08</span>
+
+            <div class="dictate__foot">
+              <span class="dictate__hint"><kbd>⌘⇧V</kbd> Hold to talk</span>
+              <span class="dictate__dest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Inserted at your cursor</span>
             </div>
           </div>
           <div class="mascot mascot--wave" aria-hidden="true"></div>
