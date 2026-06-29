@@ -5,7 +5,7 @@
 If you discover a security vulnerability in Echo, please report it privately.
 **Do not open a public issue for security problems.**
 
-- Use GitHub's [private vulnerability reporting](https://github.com/doramirdor/echo/security/advisories/new), or
+- Use GitHub's [private vulnerability reporting](https://github.com/doramirdor/echo-tauri/security/advisories/new), or
 - Email **amirdor@gmail.com** with the details.
 
 Please include:

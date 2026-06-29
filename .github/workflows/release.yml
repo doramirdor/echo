@@ -1,0 +1,54 @@
+name: Release
+
+# Publishes a signed macOS build and the Tauri updater manifest (latest.json) to
+# a GitHub Release whenever a v* tag is pushed. The app's updater endpoint
+# (https://github.com/doramirdor/echo-tauri/releases/latest/download/latest.json) then
+# resolves to the newest release, mirroring electron-updater's GitHub provider.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY          contents of ~/.tauri/echo.key (the private signing key)
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD the key's password ("" if generated without one)
+# The matching PUBLIC key is committed in src-tauri/tauri.conf.json (plugins.updater.pubkey).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Rust (universal macOS targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Builds .dmg (install) + .app.tar.gz updater artifact (signed), and
+      # generates/uploads latest.json with both darwin-aarch64 and darwin-x86_64
+      # entries from the universal build.
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Echo ${{ github.ref_name }}'
+          releaseBody: 'See the assets to download and install this version.'
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin

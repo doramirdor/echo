@@ -29,13 +29,13 @@
   ],
   "author": "Dor Amir <amirdor@gmail.com>",
   "license": "MIT",
-  "homepage": "https://doramirdor.github.io/echo/",
+  "homepage": "https://doramirdor.github.io/echo-tauri/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/doramirdor/echo.git"
+    "url": "https://github.com/doramirdor/echo-tauri.git"
   },
   "bugs": {
-    "url": "https://github.com/doramirdor/echo/issues"
+    "url": "https://github.com/doramirdor/echo-tauri/issues"
   },
   "main": "dist/main/index.js",
   "type": "commonjs",
@@ -45,7 +45,7 @@
     "publish": {
       "provider": "github",
       "owner": "doramirdor",
-      "repo": "echo"
+      "repo": "echo-tauri"
     },
     "mac": {
       "category": "public.app-category.productivity",
