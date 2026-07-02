@@ -1,4 +1,4 @@
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 
 /**
  * Local LLM refinement via llama.cpp server (OpenAI-compatible API).
@@ -23,6 +23,7 @@ export class LlamaLocalRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext: context.projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const response = await fetch(`${this.endpoint}/v1/chat/completions`, {
@@ -34,7 +35,7 @@ export class LlamaLocalRefiner implements LLMRefiner {
         max_tokens: 1024,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: rawTranscription },
+          { role: 'user', content: buildRefineUserPrompt(rawTranscription) },
         ],
       }),
     });

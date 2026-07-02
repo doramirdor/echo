@@ -8,6 +8,7 @@ import { DeepgramTranscriber } from './transcription/deepgramTranscriber';
 import { OpenAIWhisperTranscriber } from './transcription/openaiWhisperTranscriber';
 import { WhisperService, WHISPER_MODELS } from './transcription/whisperService';
 import { TextInserter } from './insertion/textInserter';
+import { undoLastInsertion } from './insertion/undo';
 import { MemoryStore } from './memory/memoryStore';
 import { MemoryEntry } from './memory/memoryEntry';
 import { CodebaseAnalyzer } from './codebase/analyzer';
@@ -257,6 +258,12 @@ export function setupIPC(
   ipcMain.handle('reinsert-from-history', async (_e, text: string) => {
     if (inserter && text) {
       await inserter.insert(text, appState.sourceApp);
+    }
+  });
+
+  ipcMain.handle('undo-last-insertion', async () => {
+    if (inserter) {
+      await undoLastInsertion(appState, inserter);
     }
   });
 

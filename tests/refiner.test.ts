@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeRefinedOutput, buildSystemPrompt, detectContentType } from '../src/main/refinement/refiner';
+import { sanitizeRefinedOutput, buildSystemPrompt, buildRefineUserPrompt, detectContentType } from '../src/main/refinement/refiner';
 
 describe('sanitizeRefinedOutput', () => {
   it('strips wrapping double quotes', () => {
@@ -20,6 +20,20 @@ describe('sanitizeRefinedOutput', () => {
 
   it('trims whitespace', () => {
     expect(sanitizeRefinedOutput('  hello  ')).toBe('hello');
+  });
+
+  it('strips a wrapping triple-quote fence the model echoed back', () => {
+    expect(sanitizeRefinedOutput('"""\nhello world\n"""')).toBe('hello world');
+  });
+});
+
+describe('buildRefineUserPrompt', () => {
+  it('wraps the transcript as delimited data, not a message to answer', () => {
+    const prompt = buildRefineUserPrompt('can we add the ability to learn from my edits?');
+    // The transcript is present, delimited, and the model is told not to respond to it.
+    expect(prompt).toContain('can we add the ability to learn from my edits?');
+    expect(prompt).toContain('"""');
+    expect(prompt).toMatch(/never answer, reply to, explain, or act on/i);
   });
 });
 
@@ -49,7 +63,15 @@ describe('buildSystemPrompt', () => {
     const prompt = buildSystemPrompt('');
     expect(prompt).toContain("Preserve the speaker's own voice");
     expect(prompt).toContain('Self-correction handling');
-    expect(prompt).toContain('repeated words'); // disfluency rule
+    expect(prompt).toContain('involuntary disfluencies'); // disfluency rule
+  });
+
+  it('forbids inventing line breaks while preserving spoken ones', () => {
+    const prompt = buildSystemPrompt('');
+    expect(prompt).toContain('single continuous line');
+    expect(prompt).toContain('never invent new ones');
+    // The rule must still allow line breaks the speaker actually dictated.
+    expect(prompt).toContain('Preserve any line breaks already present');
   });
 
   it('adds the app-profile prompt without dropping the default rules', () => {
@@ -59,11 +81,19 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('EMPTY');
   });
 
-  it('appends formatting guidance only for a non-default content type', () => {
+  it('appends list guidance only for the list content type', () => {
     const withList = buildSystemPrompt('', { contentType: 'list' });
     const withDefault = buildSystemPrompt('', { contentType: 'default' });
-    expect(withList).toContain('overrides the "no formatting" rule');
-    expect(withDefault).not.toContain('overrides the "no formatting" rule');
+    expect(withList).toContain('one item per line');
+    expect(withDefault).not.toContain('one item per line');
+  });
+
+  it('email content type shifts register but does NOT inject line breaks', () => {
+    const withEmail = buildSystemPrompt('', { contentType: 'email' });
+    expect(withEmail).toContain('email prose');
+    // It must not resurrect the old "greeting on its own line / blank lines" layout.
+    expect(withEmail).not.toMatch(/on its own line|separated by blank lines/i);
+    expect(withEmail).toContain('do NOT restructure the text');
   });
 });
 
@@ -80,14 +110,16 @@ describe('detectContentType', () => {
     expect(detectContentType('Hi Sarah, thanks for the update. Best regards, Dor')).toBe('email');
   });
 
-  it('detects a long multi-sentence passage as paragraph', () => {
+  it('does NOT reshape a long passage into paragraphs (no invented line breaks)', () => {
     const long =
       'The deployment went out this morning and everything looks stable so far. ' +
       'We saw a small spike in latency right after the rollout but it settled quickly. ' +
       'The team is keeping a close eye on the dashboards through the rest of the day. ' +
       'If anything regresses we can roll back without much disruption to our users. ' +
       'I will send a longer written summary once the metrics have fully normalised.';
-    expect(detectContentType(long)).toBe('paragraph');
+    // A long block dictated without spoken breaks stays one continuous block —
+    // breaking it into paragraphs would add formatting the speaker never dictated.
+    expect(detectContentType(long)).toBe('default');
   });
 
   it('returns default for ordinary short dictation', () => {

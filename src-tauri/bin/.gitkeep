@@ -1,0 +1,2 @@
+# Keep this dir in git. scripts/package-mac.sh stages prebuilt native helpers +
+# whisper-cli here (gitignored) so they bundle into the .app as resources.

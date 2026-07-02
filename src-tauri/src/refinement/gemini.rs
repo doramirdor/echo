@@ -10,9 +10,10 @@ pub async fn refine(api_key: &str, model: &str, raw: &str, system_prompt: &str) 
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
         model
     );
+    let user = super::refiner::build_refine_user_prompt(raw);
     let body = serde_json::json!({
         "systemInstruction": { "parts": [{ "text": system_prompt }] },
-        "contents": [{ "role": "user", "parts": [{ "text": raw }] }],
+        "contents": [{ "role": "user", "parts": [{ "text": user }] }],
         "generationConfig": { "temperature": 0, "maxOutputTokens": 1024 },
     });
 

@@ -1,8 +1,8 @@
 pub fn to_user_facing_error(err: &str) -> String {
     let lower = err.to_lowercase();
 
-    if lower.contains("sox") || lower.contains("rec: command not found") || (lower.contains("enoent") && lower.contains("rec")) {
-        return "SoX is not installed. Run: brew install sox".into();
+    if lower.contains("audio recorder") || lower.contains("record.swift") || lower.contains("rec: command not found") {
+        return "Audio recording is unavailable. Grant microphone access in System Settings → Privacy & Security → Microphone (and install Xcode Command Line Tools if prompted).".into();
     }
     if lower.contains("whisper") && (lower.contains("not found") || lower.contains("not ready")) {
         return "Whisper is not set up. Open Settings and build/download Whisper.".into();

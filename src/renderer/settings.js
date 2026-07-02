@@ -53,7 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const openaiApiModel = document.getElementById('openaiApiModel');
     if (openaiApiModel) openaiApiModel.value = s.openaiApiModel || '';
     const groqLlmModel = document.getElementById('groqLlmModel');
-    if (groqLlmModel) groqLlmModel.value = s.groqLlmModel || 'llama-3.1-8b-instant';
+    if (groqLlmModel) groqLlmModel.value = s.groqLlmModel || 'llama-3.3-70b-versatile';
     const geminiApiKey = document.getElementById('geminiApiKey');
     if (geminiApiKey) geminiApiKey.value = s.geminiApiKey || '';
     const geminiModel = document.getElementById('geminiModel');
@@ -76,10 +76,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (sttEngine) sttEngine.value = s.sttEngine || 'groq';
     const groqApiKey = document.getElementById('groqApiKey');
     if (groqApiKey) groqApiKey.value = s.groqApiKey || '';
+    const refinementEnabled = document.getElementById('refinementEnabled');
+    if (refinementEnabled) refinementEnabled.checked = s.refinementEnabled !== false;
     const grammarCheck = document.getElementById('grammarCheck');
     if (grammarCheck) grammarCheck.checked = s.grammarCheck !== false;
+    const autoFormatContent = document.getElementById('autoFormatContent');
+    if (autoFormatContent) autoFormatContent.checked = s.autoFormatContent !== false;
+    const learnFromEdits = document.getElementById('learnFromEdits');
+    if (learnFromEdits) learnFromEdits.checked = s.learnFromEdits !== false;
     const audioDevice = document.getElementById('audioDevice');
     if (audioDevice) audioDevice.value = s.audioDevice || '';
+    updateRefinementDependents();
+  }
+
+  // Grammar validation and auto-format only run inside the refinement pass, so
+  // disable (and visually dim) them when AI refinement is turned off.
+  function updateRefinementDependents() {
+    const master = document.getElementById('refinementEnabled');
+    const on = master ? master.checked : true;
+    document.querySelectorAll('.refinement-dependent').forEach(function(row) {
+      row.style.opacity = on ? '' : '0.45';
+      const input = row.querySelector('input');
+      if (input) input.disabled = !on;
+    });
   }
 
   // Auto-save on change
@@ -97,11 +116,12 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Checkbox settings
-  ['openAtLogin', 'useWindowContext', 'grammarCheck', 'silenceDetection', 'noiseReduction', 'whisperMode', 'voiceCommandsEnabled'].forEach(id => {
+  ['openAtLogin', 'useWindowContext', 'refinementEnabled', 'grammarCheck', 'autoFormatContent', 'learnFromEdits', 'silenceDetection', 'noiseReduction', 'whisperMode', 'voiceCommandsEnabled'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', function() {
       api.setSetting(id, this.checked);
+      if (id === 'refinementEnabled') updateRefinementDependents();
     });
   });
 
@@ -488,6 +508,46 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Word-level diff of raw -> refined so users can see what the LLM changed
+  // (mirrors src/main/history/diff.ts — proves Echo corrects, not rewrites).
+  function diffWords(raw, refined) {
+    var a = (raw || '').trim() ? raw.trim().split(/\s+/) : [];
+    var b = (refined || '').trim() ? refined.trim().split(/\s+/) : [];
+    var dp = [];
+    for (var x = 0; x <= a.length; x++) dp[x] = new Array(b.length + 1).fill(0);
+    for (var i = a.length - 1; i >= 0; i--)
+      for (var j = b.length - 1; j >= 0; j--)
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    var ops = [];
+    var p = 0, q = 0;
+    while (p < a.length && q < b.length) {
+      if (a[p] === b[q]) { ops.push(['equal', a[p]]); p++; q++; }
+      else if (dp[p + 1][q] >= dp[p][q + 1]) { ops.push(['remove', a[p]]); p++; }
+      else { ops.push(['add', b[q]]); q++; }
+    }
+    while (p < a.length) ops.push(['remove', a[p++]]);
+    while (q < b.length) ops.push(['add', b[q++]]);
+    var segs = [];
+    ops.forEach(function(o) {
+      var last = segs[segs.length - 1];
+      if (last && last[0] === o[0]) last[1] += ' ' + o[1];
+      else segs.push([o[0], o[1]]);
+    });
+    return segs;
+  }
+
+  function renderDiffHtml(raw, refined) {
+    var segs = diffWords(raw, refined);
+    var changed = segs.some(function(s) { return s[0] !== 'equal'; });
+    if (!changed) return '';
+    return '<div class="diff">' + segs.map(function(s) {
+      var t = escapeHtml(s[1]);
+      if (s[0] === 'add') return '<span class="diff-add">' + t + '</span>';
+      if (s[0] === 'remove') return '<span class="diff-del">' + t + '</span>';
+      return '<span>' + t + '</span>';
+    }).join(' ') + '</div>';
+  }
+
   function renderHistory(entries) {
     var list = document.getElementById('history-list');
     if (!list) return;
@@ -515,6 +575,10 @@ document.addEventListener('DOMContentLoaded', () => {
           escapeHtml((e.rawTranscription || '').substring(0, 100)) + '</div>' +
           '<div class="refined">Refined: ' +
           escapeHtml((e.refinedText || '').substring(0, 200)) + '</div>';
+        var diffHtml = renderDiffHtml(e.rawTranscription || '', e.refinedText || '');
+        if (diffHtml) {
+          body += '<details class="changes"><summary>Show changes</summary>' + diffHtml + '</details>';
+        }
       }
 
       item.innerHTML = header + body;
@@ -572,6 +636,79 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('tpl-trigger').value = '';
       document.getElementById('tpl-content').value = '';
       loadTemplates();
+    });
+  }
+
+  // App Profiles — per-app refinement overrides. Options mirror
+  // getAppProfileOptions() in src/main/context/appProfiles.ts (source of truth).
+  var APP_PROFILE_OPTIONS = [
+    { id: 'coding', label: 'Coding (preserve technical terms)' },
+    { id: 'prompt', label: 'Prompt (AI agent — keep every detail)' },
+    { id: 'shell', label: 'Shell (preserve command syntax)' },
+    { id: 'prose', label: 'Prose (formal writing)' },
+    { id: 'email', label: 'Email (courteous correspondence)' },
+    { id: 'chat', label: 'Chat (casual messaging)' },
+    { id: 'default', label: 'Default' },
+  ];
+
+  function profileLabel(id) {
+    var opt = APP_PROFILE_OPTIONS.find(function(o) { return o.id === id; });
+    return opt ? opt.label : id;
+  }
+
+  function populateProfileSelect() {
+    var sel = document.getElementById('ap-profile');
+    if (!sel || sel.options.length) return;
+    APP_PROFILE_OPTIONS.forEach(function(o) {
+      var opt = document.createElement('option');
+      opt.value = o.id;
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function loadAppProfiles() {
+    populateProfileSelect();
+    var list = document.getElementById('app-profile-list');
+    if (!list) return;
+    var s = await api.getSettings();
+    var profiles = (s && s.appProfiles) || {};
+    var apps = Object.keys(profiles);
+    if (!apps.length) {
+      list.innerHTML = '<div class="empty-state">No app overrides yet — add one to steer refinement per app.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    apps.forEach(function(appName) {
+      var item = document.createElement('div');
+      item.className = 'list-item';
+      item.innerHTML = '<div><span class="term">' + escapeHtml(appName) +
+        '</span> <span class="context">— ' + escapeHtml(profileLabel(profiles[appName])) + '</span></div>';
+      var btn = document.createElement('button');
+      btn.className = 'remove-btn';
+      btn.textContent = '✕';
+      btn.addEventListener('click', async function() {
+        var cur = ((await api.getSettings()) || {}).appProfiles || {};
+        delete cur[appName];
+        await api.setSetting('appProfiles', cur);
+        loadAppProfiles();
+      });
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+  }
+
+  var addAppProfileBtn = document.getElementById('add-app-profile-btn');
+  if (addAppProfileBtn) {
+    addAppProfileBtn.addEventListener('click', async function() {
+      var appName = document.getElementById('ap-app').value.trim();
+      var profile = document.getElementById('ap-profile').value;
+      if (!appName || !profile) return;
+      var cur = ((await api.getSettings()) || {}).appProfiles || {};
+      cur[appName] = profile;
+      await api.setSetting('appProfiles', cur);
+      document.getElementById('ap-app').value = '';
+      loadAppProfiles();
     });
   }
 
@@ -978,6 +1115,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkPromptStaleness();
   loadHistory();
   loadTemplates();
+  loadAppProfiles();
   loadProviderHealth();
   loadStats();
 });

@@ -487,6 +487,38 @@
       color: var(--danger);
     }
 
+    .history-item .changes {
+      margin-top: 8px;
+    }
+
+    .history-item .changes summary {
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 12px;
+      user-select: none;
+    }
+
+    .history-item .diff {
+      margin-top: 6px;
+      line-height: 1.7;
+      word-break: break-word;
+    }
+
+    .history-item .diff-add {
+      background: color-mix(in srgb, var(--success) 18%, transparent);
+      color: var(--success);
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+
+    .history-item .diff-del {
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
+      color: var(--danger);
+      text-decoration: line-through;
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+
     /* Add form inline */
     .add-form {
       display: flex;
@@ -1348,8 +1380,8 @@
         </div>
         <div class="form-group">
           <label>Groq Model</label>
-          <input type="text" id="groqLlmModel" placeholder="llama-3.1-8b-instant" />
-          <p class="card-description">Reuses the Groq API key from the General tab. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.1-8b-instant</code> has the lowest latency.</p>
+          <input type="text" id="groqLlmModel" placeholder="llama-3.3-70b-versatile" />
+          <p class="card-description">Reuses the Groq API key from the General tab. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.3-70b-versatile</code> (default) is accurate and still fast. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.1-8b-instant</code> is cheaper but less reliable: it can drop or change words.</p>
         </div>
       </div>
 
@@ -1402,21 +1434,51 @@
         <div class="card-title">Features</div>
         <div class="toggle-row">
           <div class="toggle-label">
-            <span>Voice commands</span>
-            <small>Say "new line", "new paragraph", "scratch that", etc.</small>
+            <span>AI refinement</span>
+            <small>Polish dictation with the LLM. Off inserts the raw transcript.</small>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="voiceCommandsEnabled" />
+            <input type="checkbox" id="refinementEnabled" />
             <span class="toggle-slider"></span>
           </label>
         </div>
-        <div class="toggle-row">
+        <div class="toggle-row refinement-dependent">
           <div class="toggle-label">
             <span>Grammar validation</span>
             <small>Runs a second LLM pass focused on grammar and spelling</small>
           </div>
           <label class="toggle">
             <input type="checkbox" id="grammarCheck" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row refinement-dependent">
+          <div class="toggle-label">
+            <span>Auto-format content</span>
+            <small>Detects lists, emails, and long passages and formats them automatically</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="autoFormatContent" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Learn from my edits</span>
+            <small>When you fix inserted text by hand, Echo remembers the correction and applies it next time</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="learnFromEdits" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Voice commands</span>
+            <small>Say "new line", "new paragraph", "scratch that", etc.</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="voiceCommandsEnabled" />
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -1432,6 +1494,17 @@
           <button class="btn-primary" id="add-template-btn">Add</button>
         </div>
         <div id="template-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">App Profiles</div>
+        <p class="card-description">Tune refinement per app. <strong>Prompt</strong> keeps every detail for AI agents (Cursor, ChatGPT, Claude); <strong>Coding</strong> preserves identifiers; <strong>Shell</strong> preserves command syntax. Overrides the automatic default for that app.</p>
+        <div class="add-form" style="margin-bottom:14px">
+          <input type="text" id="ap-app" placeholder="App name (e.g. Cursor, Slack)" />
+          <select id="ap-profile"></select>
+          <button class="btn-primary" id="add-app-profile-btn">Add</button>
+        </div>
+        <div id="app-profile-list"></div>
       </div>
 
       <div class="card">

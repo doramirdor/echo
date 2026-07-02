@@ -1,4 +1,4 @@
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 import { signRequest } from '../utils/sigv4';
 
 /**
@@ -39,6 +39,7 @@ export class BedrockRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext: context.projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const host = `bedrock-runtime.${this.region}.amazonaws.com`;
@@ -48,7 +49,7 @@ export class BedrockRefiner implements LLMRefiner {
       max_tokens: 1024,
       temperature: 0,
       system: systemPrompt,
-      messages: [{ role: 'user', content: rawTranscription }],
+      messages: [{ role: 'user', content: buildRefineUserPrompt(rawTranscription) }],
     });
 
     const signed = signRequest({

@@ -1,4 +1,4 @@
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 
 /**
  * Refiner backed by Groq's OpenAI-compatible chat endpoint.
@@ -8,14 +8,18 @@ import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
  * relying on the default refine prompt, which already fixes grammar,
  * punctuation, and spelling — there is no separate grammar pass to make.
  *
- * Default model is `llama-3.1-8b-instant`: lowest time-to-first-token on Groq,
- * which is what dominates time-to-first-insertion for short dictations.
+ * Default model is `llama-3.3-70b-versatile`: on Groq it's about as fast as the
+ * 8B (time-to-first-token dominates these short requests and the two are within
+ * noise of each other), but far more reliable at *following* the refine prompt —
+ * notably keeping deliberately-repeated content verbatim and not swapping words
+ * like "I"→"you". `llama-3.1-8b-instant` is cheaper but unstable on those, so it
+ * is opt-in via the `groqLlmModel` setting.
  */
 export class GroqRefiner implements LLMRefiner {
   private apiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model: string = 'llama-3.1-8b-instant') {
+  constructor(apiKey: string, model: string = 'llama-3.3-70b-versatile') {
     if (!apiKey) throw new Error('Groq API key not configured');
     this.apiKey = apiKey;
     this.model = model;
@@ -32,6 +36,7 @@ export class GroqRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext: context.projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const t0 = Date.now();
@@ -48,7 +53,7 @@ export class GroqRefiner implements LLMRefiner {
         max_tokens: 1024,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: rawTranscription },
+          { role: 'user', content: buildRefineUserPrompt(rawTranscription) },
         ],
       }),
     });

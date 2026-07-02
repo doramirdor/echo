@@ -4,28 +4,30 @@ import { ensureSwiftBinary, getBinaryPath } from './utils/swiftBinary';
 
 const BIN_NAME = 'fn-monitor';
 
-const HOLD_THRESHOLD_MS = 120;
-const DOUBLE_CLICK_WINDOW_MS = 400;
+// Window in which a second fn-down counts as a double-click. The press→hold
+// classification now happens in the consumer (index.ts) so recording can start
+// instantly on the very first press; the monitor only disambiguates a double-tap.
+const DOUBLE_CLICK_WINDOW_MS = 280;
 const RESTART_DELAY_MS = 2000;
 const MAX_RESTART_ATTEMPTS = 5;
 
-export type FnAction = 'hold-start' | 'hold-end' | 'double-click' | 'single-click';
+export type FnAction = 'press' | 'release' | 'double-click';
 
 /**
- * Monitors the fn/Globe key and emits high-level actions:
- * - 'hold-start': fn held down past threshold (start hold-to-record)
- * - 'hold-end': fn released after a hold (stop hold-to-record)
- * - 'double-click': fn double-tapped (toggle recording on/off)
- * - 'single-click': fn tapped once (stops toggle recording if active)
+ * Monitors the fn/Globe key and emits low-level, instant actions:
+ * - 'press':        fn pressed down (every fn-down except a double-click's 2nd tap)
+ * - 'release':      fn released (every fn-up)
+ * - 'double-click': fn tapped twice within DOUBLE_CLICK_WINDOW_MS
+ *
+ * Gesture *meaning* (hold-to-talk vs hands-free vs stray tap) is decided by the
+ * consumer from the press/release timing — keeping this monitor latency-free so
+ * recording can begin the instant fn goes down.
  */
 export class FnKeyMonitor extends EventEmitter {
   private proc: ChildProcess | null = null;
   private lastFnUpTime = 0;
-  private holdTimer: ReturnType<typeof setTimeout> | null = null;
-  private singleTapTimer: ReturnType<typeof setTimeout> | null = null;
-  private inHold = false;
+  private tapWindowTimer: ReturnType<typeof setTimeout> | null = null;
   private waitingForSecondTap = false;
-  private suppressNextUp = false;
   private lineBuffer = '';
   private stopping = false;
   private restartAttempts = 0;
@@ -95,56 +97,36 @@ export class FnKeyMonitor extends EventEmitter {
   }
 
   private resetGestureState(): void {
-    this.inHold = false;
     this.waitingForSecondTap = false;
-    this.suppressNextUp = false;
-    if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; }
-    if (this.singleTapTimer) { clearTimeout(this.singleTapTimer); this.singleTapTimer = null; }
+    if (this.tapWindowTimer) { clearTimeout(this.tapWindowTimer); this.tapWindowTimer = null; }
   }
 
   private onFnDown(): void {
     const now = Date.now();
 
     if (this.waitingForSecondTap && (now - this.lastFnUpTime) < DOUBLE_CLICK_WINDOW_MS) {
+      // Second tap of a double-click — emit the high-level gesture instead of a
+      // bare press so the consumer can lock into hands-free mode.
       this.waitingForSecondTap = false;
-      if (this.singleTapTimer) { clearTimeout(this.singleTapTimer); this.singleTapTimer = null; }
-      if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; }
-      this.suppressNextUp = true;
+      if (this.tapWindowTimer) { clearTimeout(this.tapWindowTimer); this.tapWindowTimer = null; }
       this.emit('action', 'double-click' as FnAction);
       return;
     }
 
-    this.holdTimer = setTimeout(() => {
-      this.holdTimer = null;
-      this.inHold = true;
-      this.emit('action', 'hold-start' as FnAction);
-    }, HOLD_THRESHOLD_MS);
+    this.emit('action', 'press' as FnAction);
   }
 
   private onFnUp(): void {
     this.lastFnUpTime = Date.now();
+    this.emit('action', 'release' as FnAction);
 
-    if (this.suppressNextUp) {
-      this.suppressNextUp = false;
-      return;
-    }
-
-    if (this.inHold) {
-      this.inHold = false;
-      this.emit('action', 'hold-end' as FnAction);
-      return;
-    }
-
-    if (this.holdTimer) {
-      clearTimeout(this.holdTimer);
-      this.holdTimer = null;
-    }
-
+    // Arm the double-click window: a fn-down within DOUBLE_CLICK_WINDOW_MS is a
+    // double-click; otherwise it lapses and the next press starts fresh.
     this.waitingForSecondTap = true;
-    this.singleTapTimer = setTimeout(() => {
+    if (this.tapWindowTimer) { clearTimeout(this.tapWindowTimer); }
+    this.tapWindowTimer = setTimeout(() => {
       this.waitingForSecondTap = false;
-      this.singleTapTimer = null;
-      this.emit('action', 'single-click' as FnAction);
+      this.tapWindowTimer = null;
     }, DOUBLE_CLICK_WINDOW_MS);
   }
 

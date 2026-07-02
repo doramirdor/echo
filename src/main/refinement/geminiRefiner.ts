@@ -1,4 +1,4 @@
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 
 /**
  * Refiner backed by Google's Gemini API (generateContent).
@@ -28,6 +28,7 @@ export class GeminiRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext: context.projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
@@ -42,7 +43,7 @@ export class GeminiRefiner implements LLMRefiner {
       },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text: rawTranscription }] }],
+        contents: [{ role: 'user', parts: [{ text: buildRefineUserPrompt(rawTranscription) }] }],
         generationConfig: { temperature: 0, maxOutputTokens: 1024 },
       }),
     });

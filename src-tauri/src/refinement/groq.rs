@@ -5,21 +5,24 @@
 // relying on the default refine prompt, which already fixes grammar,
 // punctuation, and spelling -- there is no separate grammar pass to make.
 //
-// `llama-3.1-8b-instant` has the lowest time-to-first-token on Groq, which is
-// what dominates time-to-first-insertion for short dictations.
+// Default model is `llama-3.3-70b-versatile`: on Groq it's about as fast as the
+// 8B for these short requests, but far more reliable at following the refine
+// prompt (keeps deliberately-repeated content verbatim, doesn't swap "I"->"you").
+// `llama-3.1-8b-instant` is cheaper but unstable on those, so it's opt-in.
 pub async fn refine(api_key: &str, model: &str, raw: &str, system_prompt: &str) -> Result<String, String> {
     if api_key.is_empty() {
         return Err("Groq API key not configured".to_string());
     }
 
     let client = reqwest::Client::new();
+    let user = super::refiner::build_refine_user_prompt(raw);
     let body = serde_json::json!({
         "model": model,
         "temperature": 0,
         "max_tokens": 1024,
         "messages": [
             { "role": "system", "content": system_prompt },
-            { "role": "user", "content": raw },
+            { "role": "user", "content": user },
         ],
     });
 

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the generated app Info.plist by the Tauri bundler. These usage
+  strings are REQUIRED: without them macOS terminates the process the instant it
+  touches the microphone / speech / Apple Events, instead of showing a prompt.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Echo records your voice so it can transcribe it and insert the text where you are typing.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Echo uses speech recognition to turn your dictation into text.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Echo uses automation to detect the focused app and insert your dictated text at the cursor.</string>
+</dict>
+</plist>

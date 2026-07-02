@@ -69,6 +69,7 @@ fn split_terms(list: &str) -> Vec<String> {
 pub fn build_speech_bias_prompt(
     vocabulary_list: &str,
     memory_entries: &[MemoryEntry],
+    project_terms: &[String],
     project_context: Option<&str>,
 ) -> String {
     let mut terms: Vec<String> = Vec::new();
@@ -90,7 +91,12 @@ pub fn build_speech_bias_prompt(
         push(&e.term);
     }
 
-    // 3. Project jargon mined from the scanned codebase context.
+    // 3. Deterministically-extracted project jargon (dependency + symbol names).
+    for t in project_terms {
+        push(t);
+    }
+
+    // 4. Project jargon mined from the scanned codebase context doc.
     if let Some(pc) = project_context {
         for id in extract_identifiers(pc) {
             push(&id);

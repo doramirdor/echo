@@ -1,4 +1,4 @@
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 
 export class OllamaRefiner implements LLMRefiner {
   private endpoint: string;
@@ -20,6 +20,7 @@ export class OllamaRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext: context.projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const response = await fetch(`${this.endpoint}/api/chat`, {
@@ -31,7 +32,7 @@ export class OllamaRefiner implements LLMRefiner {
         stream: false,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: rawTranscription },
+          { role: 'user', content: buildRefineUserPrompt(rawTranscription) },
         ],
       }),
     });

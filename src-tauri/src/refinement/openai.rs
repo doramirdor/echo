@@ -1,11 +1,12 @@
 pub async fn refine(api_key: &str, model: &str, raw: &str, system_prompt: &str) -> Result<String, String> {
     let client = reqwest::Client::new();
+    let user = super::refiner::build_refine_user_prompt(raw);
     let body = serde_json::json!({
         "model": model,
         "max_tokens": 1024,
         "messages": [
             { "role": "system", "content": system_prompt },
-            { "role": "user", "content": raw },
+            { "role": "user", "content": user },
         ],
     });
 

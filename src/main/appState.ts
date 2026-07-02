@@ -20,6 +20,8 @@ export class AppState extends EventEmitter {
   private _contextPromise: Promise<string> | null = null;
   private _existingFieldText: string | null = null;
   private _existingFieldTextAfter: string | null = null;
+  private _lastInsertedText: string | null = null;
+  private _lastInsertionSourceApp: string | null = null;
 
   get sourceApp(): string | null {
     return this._sourceApp;
@@ -89,6 +91,26 @@ export class AppState extends EventEmitter {
   setTranscription(raw: string, refined: string): void {
     this._lastTranscription = raw;
     this._lastRefinedText = refined;
+  }
+
+  /** The exact text most recently inserted at the cursor (for post-insert undo). */
+  get lastInsertedText(): string | null {
+    return this._lastInsertedText;
+  }
+
+  /** The app the last insertion went into — undo must re-target it. */
+  get lastInsertionSourceApp(): string | null {
+    return this._lastInsertionSourceApp;
+  }
+
+  setLastInsertion(text: string, sourceApp: string | null): void {
+    this._lastInsertedText = text;
+    this._lastInsertionSourceApp = sourceApp;
+  }
+
+  clearLastInsertion(): void {
+    this._lastInsertedText = null;
+    this._lastInsertionSourceApp = null;
   }
 
   get isRecording(): boolean {

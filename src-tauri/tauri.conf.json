@@ -42,7 +42,9 @@
     },
     "resources": [
       "../assets/tray/*",
-      "../scripts/*.swift"
+      "../scripts/*.swift",
+      "bin/*",
+      "models/*"
     ],
     "category": "Productivity",
     "shortDescription": "Voice-to-text with LLM refinement",

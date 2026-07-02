@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { extractProjectJargon } from './projectJargon';
 
 const EXTRA_PATH = [
   os.homedir() + '/.local/bin',
@@ -11,6 +12,7 @@ const EXTRA_PATH = [
 
 const CONTEXT_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'echo');
 const CONTEXT_FILE = path.join(CONTEXT_DIR, 'project-context.md');
+const JARGON_FILE = path.join(CONTEXT_DIR, 'project-jargon.json');
 
 export class CodebaseAnalyzer {
   /**
@@ -95,6 +97,14 @@ Output the document in markdown format.`;
           console.error('[analyzer] Failed to save context:', err);
         }
 
+        // Also refresh the deterministic (LLM-free) jargon cache from the same
+        // path, so STT biasing has exact identifiers even before the LLM doc.
+        try {
+          CodebaseAnalyzer.quickScan(projectPath);
+        } catch (err) {
+          console.error('[analyzer] Quick jargon scan failed:', err);
+        }
+
         resolve(context);
       });
 
@@ -126,5 +136,37 @@ Output the document in markdown format.`;
 
   static getContextPath(): string {
     return CONTEXT_FILE;
+  }
+
+  /**
+   * Deterministic, LLM-free jargon scan: extract dependency and symbol names
+   * from a project and cache them for STT biasing. Fast enough to run on demand
+   * and works with no LLM configured.
+   */
+  static quickScan(projectPath: string): string[] {
+    let resolved = projectPath;
+    if (resolved.startsWith('~')) resolved = resolved.replace(/^~/, os.homedir());
+    const terms = extractProjectJargon(resolved);
+    try {
+      fs.mkdirSync(CONTEXT_DIR, { recursive: true });
+      fs.writeFileSync(JARGON_FILE, JSON.stringify(terms));
+      console.log(`[analyzer] Cached ${terms.length} jargon terms to ${JARGON_FILE}`);
+    } catch (err) {
+      console.error('[analyzer] Failed to save jargon:', err);
+    }
+    return terms;
+  }
+
+  /** Load the cached deterministic jargon terms (empty if none). */
+  static loadJargonTerms(): string[] {
+    try {
+      if (fs.existsSync(JARGON_FILE)) {
+        const parsed = JSON.parse(fs.readFileSync(JARGON_FILE, 'utf-8'));
+        if (Array.isArray(parsed)) return parsed.filter((t): t is string => typeof t === 'string');
+      }
+    } catch (err) {
+      console.error('[analyzer] Failed to load jargon:', err);
+    }
+    return [];
   }
 }

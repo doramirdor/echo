@@ -36,8 +36,11 @@ pub struct AppStateInner {
     pub existing_field_text_after: Option<String>,
     pub context_result: Option<String>,
     pub live_injected_text: String,
-    pub fn_hold_recording: bool,
     pub hotkey_hold_recording: bool,
+    /// The exact text most recently inserted at the cursor, and the app it went
+    /// into — used by the post-insert undo hotkey to revert precisely that text.
+    pub last_inserted_text: Option<String>,
+    pub last_insertion_source_app: Option<String>,
 }
 
 impl Default for AppStateInner {
@@ -52,8 +55,9 @@ impl Default for AppStateInner {
             existing_field_text_after: None,
             context_result: None,
             live_injected_text: String::new(),
-            fn_hold_recording: false,
             hotkey_hold_recording: false,
+            last_inserted_text: None,
+            last_insertion_source_app: None,
         }
     }
 }
@@ -93,6 +97,18 @@ impl AppState {
         inner.last_refined_text = Some(refined);
     }
 
+    pub async fn set_last_insertion(&self, text: String, source_app: Option<String>) {
+        let mut inner = self.inner.lock().await;
+        inner.last_inserted_text = Some(text);
+        inner.last_insertion_source_app = source_app;
+    }
+
+    pub async fn clear_last_insertion(&self) {
+        let mut inner = self.inner.lock().await;
+        inner.last_inserted_text = None;
+        inner.last_insertion_source_app = None;
+    }
+
     pub async fn get_state(&self) -> EchoState {
         self.inner.lock().await.state
     }
@@ -104,5 +120,28 @@ impl AppState {
     pub async fn is_busy(&self) -> bool {
         let state = self.inner.lock().await.state;
         state != EchoState::Idle && state != EchoState::Error
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn records_and_clears_last_insertion() {
+        let s = AppState::new();
+        assert!(s.inner.lock().await.last_inserted_text.is_none());
+
+        s.set_last_insertion("hello world".into(), Some("Slack".into())).await;
+        {
+            let inner = s.inner.lock().await;
+            assert_eq!(inner.last_inserted_text.as_deref(), Some("hello world"));
+            assert_eq!(inner.last_insertion_source_app.as_deref(), Some("Slack"));
+        }
+
+        s.clear_last_insertion().await;
+        let inner = s.inner.lock().await;
+        assert!(inner.last_inserted_text.is_none());
+        assert!(inner.last_insertion_source_app.is_none());
     }
 }

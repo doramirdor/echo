@@ -5,7 +5,9 @@ import { AudioRecorder } from './audio/recorder';
 import { WhisperService } from './transcription/whisperService';
 import { MacOSTranscriber } from './transcription/macosTranscriber';
 import { TextInserter } from './insertion/textInserter';
+import { undoLastInsertion } from './insertion/undo';
 import { MemoryStore } from './memory/memoryStore';
+import { getEditLearner } from './memory/editLearner';
 import { LiveTranscriber } from './transcription/liveTranscriber';
 import { FnKeyMonitor, FnAction } from './fnKeyMonitor';
 import { getSetting } from './settings/settings';
@@ -32,12 +34,32 @@ const memory = new MemoryStore();
 const liveTranscriber = new LiveTranscriber();
 const fnKeyMonitor = new FnKeyMonitor();
 
-// Track whether current recording was started via fn-hold (vs fn-double-click / toggle)
-let fnHoldRecording = false;
 // Track whether current recording was started via hotkey hold mode
 let hotkeyHoldRecording = false;
 // Pending start delay timer
 let startDelayTimer: ReturnType<typeof setTimeout> | null = null;
+
+// --- fn-key gesture state (optimistic instant-start machine) ---
+// Recording begins the instant fn goes down; the press is then classified on
+// release. `pending` = started, not yet classified (a hold release stops it
+// immediately, so there's no persistent hold state); `handsfree` = double-click
+// latched, stops on the next tap / overlay click.
+type FnSessionMode = 'idle' | 'pending' | 'handsfree';
+let fnSessionMode: FnSessionMode = 'idle';
+let fnPressTime = 0;
+let fnStrayTapTimer: ReturnType<typeof setTimeout> | null = null;
+// A press held at least this long counts as real speech and is kept (push-to-talk),
+// so even a quick "yes"/"no" isn't dropped. A shorter press is treated as a mistake
+// — either the first half of a double-click or a stray tap to be discarded.
+const FN_HOLD_MIN_MS = 100;
+// How long to wait after a quick tap for a double-click before discarding the
+// optimistic recording. Kept slightly above the monitor's double-click window so
+// a genuine double-click always lands before the stray-tap discard fires.
+const FN_TAP_RESOLVE_MS = 340;
+
+function clearFnStrayTapTimer(): void {
+  if (fnStrayTapTimer) { clearTimeout(fnStrayTapTimer); fnStrayTapTimer = null; }
+}
 
 // --- Live injection state ---
 let liveInjectedText = '';  // full text injected so far during live recording
@@ -87,7 +109,6 @@ function onSilenceLevel(level: number): void {
       silenceTimer = setTimeout(() => {
         if (appState.state === EchoState.Recording) {
           console.log(`[echo] Silence detected (${duration}ms), auto-stopping`);
-          fnHoldRecording = false;
           stopRecording();
         }
       }, duration);
@@ -118,7 +139,6 @@ function startHoldDetection(): void {
         stopHoldDetection();
         if (appState.state === EchoState.Recording && (hotkeyHoldRecording || getSetting('recordingMode') === 'hold')) {
           hotkeyHoldRecording = false;
-          fnHoldRecording = false;
           stopRecording();
         }
       }
@@ -135,65 +155,96 @@ function stopHoldDetection(): void {
   }
 }
 
-// --- Toggle Recording (fallback hotkey) ---
+// --- Toggle Recording (fallback hotkey + overlay click) ---
 function toggle(): void {
-  const mode = getSetting('recordingMode');
-
-  if (mode === 'hold') {
-    // In hold mode, hotkey down starts recording; release is handled by hold detection
-    if (appState.state === EchoState.Idle || appState.state === EchoState.Error) {
-      fnHoldRecording = false;
-      hotkeyHoldRecording = true;
-      beginRecordingWithDelay();
-      startHoldDetection();
-    }
+  // A live recording always stops on toggle — this is what powers the overlay
+  // click-to-stop and the fallback hotkey, regardless of how recording was
+  // started (fn hold, double-click, hotkey) or the configured recordingMode.
+  if (appState.state === EchoState.Recording) {
+    fnSessionMode = 'idle';
+    hotkeyHoldRecording = false;
+    stopRecording();
     return;
   }
 
-  // Toggle mode
-  if (appState.state === EchoState.Recording) {
-    fnHoldRecording = false;
-    hotkeyHoldRecording = false;
-    stopRecording();
-  } else if (appState.state === EchoState.Idle || appState.state === EchoState.Error) {
-    fnHoldRecording = false;
-    hotkeyHoldRecording = false;
+  if (appState.state !== EchoState.Idle && appState.state !== EchoState.Error) return;
+
+  const mode = getSetting('recordingMode');
+  if (mode === 'hold') {
+    // In hold mode, hotkey down starts recording; release is handled by hold detection
+    hotkeyHoldRecording = true;
     beginRecordingWithDelay();
+    startHoldDetection();
+    return;
   }
+
+  // Toggle mode — start
+  hotkeyHoldRecording = false;
+  beginRecordingWithDelay();
 }
 
 // --- fn key actions ---
+// Recording starts the instant fn goes down (no hold threshold), then the
+// gesture is classified from how the key is released:
+//   • hold ≥100ms then release  → push-to-talk: stop on release (audio kept)
+//   • quick double-tap          → hands-free: latch on, stop on next tap/overlay
+//   • sub-100ms tap, nothing    → stray: discard the recording (no pipeline)
 function handleFnAction(action: FnAction): void {
   switch (action) {
-    case 'hold-start':
+    case 'press':
+      fnPressTime = Date.now();
+      clearFnStrayTapTimer();
+      if (appState.state === EchoState.Recording) {
+        // While latched hands-free, a press is the user stopping. Push-to-talk
+        // holds ignore extra presses (there's only one physical key).
+        if (fnSessionMode === 'handsfree') {
+          fnSessionMode = 'idle';
+          stopRecording();
+        }
+        return;
+      }
       if (appState.state === EchoState.Idle || appState.state === EchoState.Error) {
-        fnHoldRecording = true;
+        fnSessionMode = 'pending';
         hotkeyHoldRecording = false;
-        beginRecordingWithDelay();
+        startRecording(); // instant — no delay/threshold
       }
       break;
 
-    case 'hold-end':
-      if (appState.state === EchoState.Recording && fnHoldRecording) {
-        fnHoldRecording = false;
+    case 'release':
+      if (appState.state !== EchoState.Recording || fnSessionMode !== 'pending') return;
+      if (Date.now() - fnPressTime >= FN_HOLD_MIN_MS) {
+        // Deliberate hold → push-to-talk stop.
+        fnSessionMode = 'idle';
         stopRecording();
+      } else {
+        // Quick tap: wait briefly for a double-click to latch hands-free,
+        // otherwise discard the few ms of optimistically-recorded audio.
+        clearFnStrayTapTimer();
+        fnStrayTapTimer = setTimeout(() => {
+          fnStrayTapTimer = null;
+          if (appState.state === EchoState.Recording && fnSessionMode === 'pending') {
+            fnSessionMode = 'idle';
+            cancelRecording();
+          }
+        }, FN_TAP_RESOLVE_MS);
       }
       break;
 
     case 'double-click':
-      if (appState.state === EchoState.Idle || appState.state === EchoState.Error) {
-        fnHoldRecording = false;
+      clearFnStrayTapTimer();
+      if (appState.state === EchoState.Recording) {
+        if (fnSessionMode === 'pending') {
+          // Upgrade the in-progress optimistic recording to hands-free.
+          fnSessionMode = 'handsfree';
+        } else if (fnSessionMode === 'handsfree') {
+          fnSessionMode = 'idle';
+          stopRecording();
+        }
+      } else if (appState.state === EchoState.Idle || appState.state === EchoState.Error) {
+        // Safety net (e.g. a missed first press) — start hands-free directly.
+        fnSessionMode = 'handsfree';
         hotkeyHoldRecording = false;
-        beginRecordingWithDelay();
-      } else if (appState.state === EchoState.Recording && !fnHoldRecording) {
-        stopRecording();
-      }
-      break;
-
-    case 'single-click':
-      // Single fn tap stops toggle recording (if recording via double-click)
-      if (appState.state === EchoState.Recording && !fnHoldRecording) {
-        stopRecording();
+        startRecording();
       }
       break;
   }
@@ -253,6 +304,16 @@ function startRecording(): void {
     // continuation. Fast and independent of the heavier context synthesis below.
     captureFieldContext()
       .then((fc) => {
+        // Before overwriting, diff this fresh read against what we last inserted
+        // to learn any hand-edits the user made to it (Wispr-style "learns from
+        // your corrections"). Best-effort — never blocks recording.
+        if (getSetting('learnFromEdits')) {
+          try {
+            getEditLearner().learnFromField({ before: fc.before, after: fc.after });
+          } catch (err) {
+            logger.warn('echo', `Edit learning failed: ${(err as Error).message}`);
+          }
+        }
         appState.existingFieldText = fc.before || null;
         appState.existingFieldTextAfter = fc.after || null;
         if (fc.before || fc.after) {
@@ -310,12 +371,29 @@ function startRecording(): void {
 
 function stopRecording(): void {
   cancelPendingStart();
+  clearFnStrayTapTimer();
   stopSilenceDetection();
   stopHoldDetection();
+  fnSessionMode = 'idle';
   hotkeyHoldRecording = false;
   playRecordingStop();
   liveTranscriber.stop();
   runPipeline(appState, recorder, whisper, macosSTT, inserter, memory, liveInjectedText);
+}
+
+/** Discard the current recording without running the pipeline (stray tap / cancel). */
+function cancelRecording(): void {
+  cancelPendingStart();
+  clearFnStrayTapTimer();
+  stopSilenceDetection();
+  stopHoldDetection();
+  fnSessionMode = 'idle';
+  hotkeyHoldRecording = false;
+  if (appState.state === EchoState.Recording) {
+    recorder.forceStop();
+    liveTranscriber.forceStop();
+    appState.setState(EchoState.Idle);
+  }
 }
 
 // --- App Lifecycle ---
@@ -381,6 +459,16 @@ app.whenReady().then(() => {
     console.log(`[echo] Overlay hotkey registered: ${overlayHotkey}`);
   }
 
+  const undoHotkey = getSetting('undoHotkey');
+  const undoRegistered = globalShortcut.register(undoHotkey, () => {
+    void undoLastInsertion(appState, inserter);
+  });
+  if (!undoRegistered) {
+    console.error(`[echo] Failed to register undo hotkey: ${undoHotkey}`);
+  } else {
+    console.log(`[echo] Undo hotkey registered: ${undoHotkey}`);
+  }
+
   setupIPC(appState, whisper, memory, toggle, inserter, recorder, liveTranscriber,
     () => ({ ok: fnKeyMonitor.inputMonitoring === 'granted', status: fnKeyMonitor.inputMonitoring }));
 
@@ -389,13 +477,14 @@ app.whenReady().then(() => {
   ensureSwiftBinary('live-transcribe', 'scripts/live-transcribe.swift');
   ensureSwiftBinary('transcribe', 'scripts/transcribe.swift');
   ensureSwiftBinary('field-context', 'scripts/field-context.swift');
+  ensureSwiftBinary('record', 'scripts/record.swift');
 
   // Auto-update (packaged builds only)
   setupAutoUpdater();
 
-  // Check dependencies
-  const soxCheck = AudioRecorder.checkDependencies();
-  if (!soxCheck.ok) logger.warn('echo', soxCheck.message ?? 'SoX not found');
+  // Check dependencies (native audio recorder must be available)
+  const recorderCheck = AudioRecorder.checkDependencies();
+  if (!recorderCheck.ok) logger.warn('echo', recorderCheck.message ?? 'audio recorder not ready');
 
   const whisperCheck = whisper.isReady();
   if (!whisperCheck.binary || !whisperCheck.model) {
@@ -425,6 +514,7 @@ app.on('before-quit', () => {
   liveTranscriber.forceStop();
   fnKeyMonitor.forceStop();
   memory.flush();
+  getEditLearner().flush();
   setTimeout(() => {
     console.error('[echo] Shutdown timed out — force exiting');
     process.exit(1);

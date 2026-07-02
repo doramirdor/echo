@@ -19,12 +19,13 @@ pub async fn refine(
     let region = if region.is_empty() { "us-east-1" } else { region };
     let host = format!("bedrock-runtime.{}.amazonaws.com", region);
     let path = format!("/model/{}/invoke", model);
+    let user = super::refiner::build_refine_user_prompt(raw);
     let body = serde_json::json!({
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": 1024,
         "temperature": 0,
         "system": system_prompt,
-        "messages": [{ "role": "user", "content": raw }],
+        "messages": [{ "role": "user", "content": user }],
     })
     .to_string();
 

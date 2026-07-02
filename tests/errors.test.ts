@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { toUserFacingError } from '../src/main/utils/errors';
 
 describe('toUserFacingError', () => {
-  it('maps SoX errors', () => {
+  it('maps audio recorder errors', () => {
     const msg = toUserFacingError(new Error('rec: command not found'));
-    expect(msg).toContain('SoX');
+    expect(msg).toContain('Audio recording');
   });
 
   it('maps Whisper errors', () => {

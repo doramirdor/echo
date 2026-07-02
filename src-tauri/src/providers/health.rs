@@ -16,7 +16,7 @@ pub async fn check_all_providers(settings: &SettingsStore) -> Vec<ProviderStatus
     let mut results = vec![];
 
     let (ok, msg) = AudioRecorder::check_dependencies();
-    results.push(ProviderStatus { id: "sox".into(), label: "SoX (audio)".into(), ok, message: msg });
+    results.push(ProviderStatus { id: "sox".into(), label: "Audio recording".into(), ok, message: msg });
 
     let (ok, msg) = text_inserter::check_permissions();
     results.push(ProviderStatus { id: "accessibility".into(), label: "Accessibility".into(), ok, message: msg });

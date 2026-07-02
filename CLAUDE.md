@@ -34,7 +34,8 @@ npm run lint           # eslint src/ tests/
 npx tsc --noEmit       # type-check without emitting (what CI runs)
 
 npm run build          # cargo tauri build — produces the Tauri .app/.dmg
-npm run setup          # scripts/setup-whisper.sh: brew sox/cmake, build whisper.cpp, download model
+npm run setup          # scripts/setup-whisper.sh: brew git/cmake, build whisper.cpp, download model
+bash scripts/package-mac.sh   # build a SHAREABLE .dmg: bundles prebuilt helpers + whisper-cli + model so the recipient needs no dev tools (see SHARE.md)
 
 # Tauri dev (Rust side):
 cargo tauri dev        # or: npm run tauri dev
@@ -80,10 +81,10 @@ Layered on top of the base pipeline to make recognition accurate and natural —
 
 ## Native integration (platform-specific, macOS only)
 
-- **Swift helper binaries** compiled on-demand from `scripts/*.swift` into `~/Library/Application Support/echo/bin/` (see `swiftBinary.ts` / `swift_binary.rs`): `fn-monitor` (hotkey), `live-transcribe` (real-time preview), `transcribe` (macOS Speech), and `field-context` (reads text around the caret for continuation).
+- **Swift helper binaries** compiled on-demand from `scripts/*.swift` into `~/Library/Application Support/echo/bin/` (see `swiftBinary.ts` / `swift_binary.rs`): `fn-monitor` (hotkey), `live-transcribe` (real-time preview), `transcribe` (macOS Speech), `field-context` (reads text around the caret for continuation), and `record` (native mic capture).
 - **`osascript` / AppleScript** is used for source-app detection, re-activating the source app, modifier-key polling (hold detection), and **text insertion** (requires Accessibility permission).
-- **SoX** (`rec`) does audio capture — a hard external dependency (`brew install sox`).
-- **whisper.cpp** is git-cloned and built with cmake at runtime (onboarding or `npm run setup`); models download from Hugging Face.
+- **Audio capture is native** — `scripts/record.swift` streams 16kHz mono 16-bit PCM via `AVAudioEngine` (replacing the old `rec`), so recording has **no hard external dependency**. **SoX** (`sox`) is now *optional*: if on PATH it adds noise reduction + upload compression in `recorder.postProcess`/`encodeForUpload`; if absent those steps are skipped and the raw recording is used. `AudioRecorder.checkDependencies()` now verifies the native recorder, not sox.
+- **whisper.cpp** is git-cloned and built with cmake at runtime (onboarding or `npm run setup`); models download from Hugging Face. **Packaged (shareable) builds** instead **bundle** prebuilt native helpers + `whisper-cli` + the model as app resources and seed them into `~/Library/Application Support/echo/{bin,models}` on first run (`src-tauri/src/utils/provision.rs`, staged by `scripts/package-mac.sh`), so the recipient needs no Xcode tools / git / cmake / network. The packaged app's `Info.plist` (`src-tauri/Info.plist`) carries the `NSMicrophone`/`NSSpeechRecognition`/`NSAppleEvents` usage strings required for the permission prompts.
 - Persistent data lives under `~/Library/Application Support/echo/` (`bin/`, `models/`, settings, memory, run log). Settings use `electron-store` on the Electron side.
 
 ## Testing

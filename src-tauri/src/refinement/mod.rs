@@ -21,8 +21,10 @@ pub struct RefinementContext {
     pub existing_field_text: Option<String>,
     pub existing_field_text_after: Option<String>,
     pub tone: Option<String>,
-    /// Detected content type for auto-formatting ("list" | "email" | "paragraph").
+    /// Detected content type, to make refinement context-relevant ("list" | "email").
     pub content_type: Option<String>,
+    /// Preferences learned from the user's own edits to inserted text (formatted).
+    pub edit_corrections: Option<String>,
 }
 
 pub async fn refine(

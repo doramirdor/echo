@@ -45,6 +45,20 @@ let value: String = {
     return ""
 }()
 
+// Placeholder shown while the field is empty (e.g. "Type / for commands…").
+// Some apps — notably Electron/web chat inputs — surface the placeholder as the
+// AXValue, which would otherwise be mistaken for text the user is continuing
+// from (corrupting spacing/capitalisation and misleading the refiner). If the
+// value is exactly the placeholder, the field is really empty.
+var placeholderRef: AnyObject?
+let placeholder: String = {
+    if AXUIElementCopyAttributeValue(axElement, kAXPlaceholderValueAttribute as CFString, &placeholderRef) == .success,
+       let p = placeholderRef as? String {
+        return p
+    }
+    return ""
+}()
+
 // Selected text (if any).
 var selRef: AnyObject?
 let selected: String = {
@@ -68,7 +82,7 @@ if AXUIElementCopyAttributeValue(axElement, kAXSelectedTextRangeAttribute as CFS
     }
 }
 
-if value.isEmpty {
+if value.isEmpty || (!placeholder.isEmpty && value == placeholder) {
     emit(before: "", after: "", selected: selected)
 }
 

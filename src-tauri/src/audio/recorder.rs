@@ -46,19 +46,24 @@ impl AudioRecorder {
         let tmp = std::env::temp_dir().join(format!("echo-{}.wav", chrono::Utc::now().timestamp_millis()));
         self.output_path = tmp;
 
-        let mut cmd = Command::new("rec");
-        cmd.args(["-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"]);
+        if !crate::utils::swift_binary::ensure_swift_binary("record", "scripts/record.swift") {
+            return Err("Native audio recorder unavailable (failed to compile record.swift)".into());
+        }
+        let bin = crate::utils::swift_binary::get_binary_path("record");
+
+        // Native helper streams 16kHz mono 16-bit raw PCM to stdout, like `rec`.
+        let mut cmd = Command::new(&bin);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
         cmd.stdin(Stdio::null());
 
         if let Some(dev) = device_name {
-            cmd.env("AUDIODEV", dev);
-            log::info!("[recorder] Using audio device: {}", dev);
+            cmd.arg(dev); // advisory — capture follows the system default input
+            log::info!("[recorder] Audio device requested: {}", dev);
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            format!("Failed to start sox/rec: {}. Install sox: brew install sox", e)
+            format!("Failed to start native audio recorder: {}", e)
         })?;
 
         let child_pid = child.id();
@@ -190,6 +195,10 @@ impl AudioRecorder {
     }
 
     pub fn post_process(wav_path: &std::path::Path, noise_reduction: bool, whisper_mode: bool) -> PathBuf {
+        // SoX is optional — without it we transcribe the raw recording as-is.
+        if !sox_available() {
+            return wav_path.to_path_buf();
+        }
         let processed = wav_path.with_extension("clean.wav");
         let mut input_path = wav_path.to_path_buf();
 
@@ -274,6 +283,11 @@ impl AudioRecorder {
             return wav_path.to_path_buf();
         }
 
+        // Encoding needs SoX; without it we upload the WAV unchanged.
+        if !sox_available() {
+            return wav_path.to_path_buf();
+        }
+
         let out_path = wav_path.with_extension(&fmt);
         let input_str = wav_path.to_str().unwrap_or("");
         let out_str = out_path.to_str().unwrap_or("");
@@ -307,9 +321,10 @@ impl AudioRecorder {
     }
 
     pub fn check_dependencies() -> (bool, String) {
-        match std::process::Command::new("which").arg("rec").output() {
-            Ok(output) if output.status.success() => (true, "sox is installed".into()),
-            _ => (false, "sox is not installed. Run: brew install sox".into()),
+        if crate::utils::swift_binary::ensure_swift_binary("record", "scripts/record.swift") {
+            (true, "native audio recorder ready".into())
+        } else {
+            (false, "Audio recorder unavailable. Install Xcode Command Line Tools: xcode-select --install".into())
         }
     }
 
@@ -329,6 +344,16 @@ impl AudioRecorder {
             Err(_) => vec![],
         }
     }
+}
+
+/// Whether the optional `sox` post-processing tool is on PATH. SoX is no longer
+/// required to record — it only adds noise reduction and upload compression.
+fn sox_available() -> bool {
+    std::process::Command::new("which")
+        .arg("sox")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn compute_rms(buf: &[u8]) -> f32 {

@@ -85,6 +85,7 @@
     // History search
     searchRunLog: (query) => invoke('search_run_log', { query }),
     reinsertFromHistory: (text) => invoke('reinsert_from_history', { text }),
+    undoLastInsertion: () => invoke('undo_last_insertion'),
 
     // Re-insert text
     reinsertText: (text) => invoke('reinsert_text', { text }),

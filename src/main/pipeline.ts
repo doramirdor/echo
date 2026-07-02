@@ -10,6 +10,7 @@ import { OpenAIWhisperTranscriber } from './transcription/openaiWhisperTranscrib
 import { TextInserter } from './insertion/textInserter';
 import { MemoryStore } from './memory/memoryStore';
 import { VocabularyLearner } from './memory/vocabularyLearner';
+import { getEditLearner } from './memory/editLearner';
 import { CLIRefiner } from './refinement/cliRefiner';
 import { OllamaRefiner } from './refinement/ollamaRefiner';
 import { ClaudeRefiner } from './refinement/claudeRefiner';
@@ -21,7 +22,7 @@ import { LlamaLocalRefiner } from './refinement/llamaRefiner';
 import { LLMRefiner, sanitizeRefinedOutput, GRAMMAR_VALIDATION_PROMPT, detectContentType } from './refinement/refiner';
 import { getSetting } from './settings/settings';
 import { captureWindowContext, formatWindowContext } from './context/windowContext';
-import { getProfilePrompt } from './context/appProfiles';
+import { getProfilePrompt, detectAppProfile } from './context/appProfiles';
 import { buildDictationContext } from './context/dictationContext';
 import { processVoiceCommands } from './voice/voiceCommands';
 import { TemplateStore } from './templates/templateStore';
@@ -181,6 +182,7 @@ export async function runPipeline(
       vocabularyList: getSetting('vocabularyList'),
       memoryEntries: memory.getAll(),
       projectContext,
+      projectTerms: CodebaseAnalyzer.loadJargonTerms(),
     });
 
     const { text: rawText, segments } = await transcribeAudio(
@@ -205,8 +207,12 @@ export async function runPipeline(
       cleaned = template.content;
     }
 
-    // Process voice commands
-    const voiceResult = processVoiceCommands(cleaned, getSetting('voiceCommandsEnabled'));
+    // Process voice commands. Enable the code-dictation grammar only in code/shell
+    // contexts so spoken symbols/case transforms never fire in prose, email, or chat.
+    const activeProfile = detectAppProfile(appState.sourceApp);
+    const voiceResult = processVoiceCommands(cleaned, getSetting('voiceCommandsEnabled'), {
+      codeSymbols: activeProfile === 'coding' || activeProfile === 'shell',
+    });
     cleaned = voiceResult.text;
 
     if (!cleaned) {
@@ -215,9 +221,9 @@ export async function runPipeline(
       return;
     }
 
-    // 3. Refine with LLM (if configured and not skipped by voice command)
+    // 3. Refine with LLM (if enabled, configured, and not skipped by voice command)
     let refinedText = cleaned;
-    const refiner = voiceResult.skipRefinement ? null : createRefiner();
+    const refiner = (voiceResult.skipRefinement || !getSetting('refinementEnabled')) ? null : createRefiner();
 
     // What is currently shown in the target app and will be replaced by the
     // refined text. Starts as whatever was injected live during recording.
@@ -244,6 +250,11 @@ export async function runPipeline(
 
       const relevant = memory.findRelevant(cleaned);
       const formatted = memory.formatForPrompt(relevant);
+
+      // Preferences learned from the user's own edits to previously inserted text.
+      const editCorrections = getSetting('learnFromEdits')
+        ? getEditLearner().formatForPrompt()
+        : '';
 
       if (appState.contextPromise) {
         try {
@@ -306,6 +317,7 @@ export async function runPipeline(
           projectContext,
           tone,
           contentType,
+          editCorrections,
         });
 
         refinedText = sanitizeRefinedOutput(refinedText);
@@ -316,6 +328,7 @@ export async function runPipeline(
           if (injectedText) {
             await inserter.replaceLiveText('', Array.from(injectedText).length, appState.sourceApp);
           }
+          appState.clearLastInsertion();
           appState.setState(EchoState.Idle);
           return;
         }
@@ -352,6 +365,9 @@ export async function runPipeline(
     // 4. Insert refined text
     appState.setState(EchoState.Inserting);
 
+    // The exact string that ends up in the field — snapshotted below so the next
+    // dictation can detect how the user edited it.
+    let insertedFinal: string;
     if (injectedText) {
       // Replace the text already on screen (live or instant-insert) with the
       // refined version. Skip the round trip if it would be a no-op.
@@ -362,6 +378,7 @@ export async function runPipeline(
       } else {
         logger.info('pipeline', 'Refined text matches what is already inserted — leaving as-is');
       }
+      insertedFinal = finalText;
     } else {
       // Nothing on screen yet (no LLM and no live text): fresh insert, continuing
       // from the caret. Deterministic, so it works even with no LLM configured.
@@ -369,10 +386,24 @@ export async function runPipeline(
       const textToInsert = before ? joinContinuation(before, refinedText) : refinedText;
       logger.info('pipeline', `Inserting: "${textToInsert}"`);
       await inserter.insert(textToInsert, appState.sourceApp);
+      insertedFinal = textToInsert;
     }
 
     logger.info('pipeline', 'Done');
     appState.setState(EchoState.Idle);
+
+    // Record the insertion so the undo hotkey can revert exactly this text.
+    appState.setLastInsertion(insertedFinal, appState.sourceApp);
+
+    // Remember what we inserted (and the field text around it) so the *next*
+    // dictation can diff it against the user's hand-edits and learn corrections.
+    if (getSetting('learnFromEdits')) {
+      getEditLearner().recordInsertion({
+        inserted: insertedFinal,
+        beforeAnchor: appState.existingFieldText || '',
+        afterAnchor: appState.existingFieldTextAfter || '',
+      });
+    }
 
     // Auto vocabulary learning
     getVocabularyLearner(memory).analyze(cleaned, refinedText);
@@ -396,6 +427,8 @@ export async function runPipeline(
     const message = toUserFacingError(err);
     logger.error('pipeline', `ERROR: ${message}`);
 
+    // Nothing reliably landed — don't let undo delete unrelated text.
+    appState.clearLastInsertion();
     appState.setState(EchoState.Error, message);
 
     getRunLog().add({

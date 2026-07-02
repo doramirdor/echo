@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import * as os from 'os';
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 import { CodebaseAnalyzer } from '../codebase/analyzer';
 
 const EXTRA_PATH = [
@@ -32,11 +32,12 @@ export class CLIRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const fullPrompt = `${systemPrompt}
-Raw transcription:
-${rawTranscription}`;
+
+${buildRefineUserPrompt(rawTranscription)}`;
 
     console.log(`[${this.command}] Sending ${fullPrompt.length} chars (project context: ${projectContext ? 'yes' : 'no'})`);
 

@@ -46,4 +46,35 @@ describe('appProfiles', () => {
     expect(prompt.toLowerCase()).toContain('terminal');
     expect(prompt.toLowerCase()).toContain('command syntax');
   });
+
+  it('detects the prompt profile for dedicated AI assistants', () => {
+    expect(detectAppProfile('ChatGPT')).toBe('prompt');
+    expect(detectAppProfile('Claude')).toBe('prompt');
+    expect(detectAppProfile('Perplexity')).toBe('prompt');
+  });
+
+  it('keeps AI-enabled code editors on the coding profile by default', () => {
+    expect(detectAppProfile('Cursor')).toBe('coding');
+    expect(detectAppProfile('Windsurf')).toBe('coding');
+  });
+
+  it('returns a prompt profile that preserves every detail and does not act on the request', () => {
+    const prompt = getProfilePrompt('ChatGPT');
+    expect(prompt.toLowerCase()).toContain('prompt');
+    expect(prompt.toLowerCase()).toContain('verbatim');
+    expect(prompt.toLowerCase()).toContain('do not answer');
+  });
+
+  it('detects the email profile for mail clients', () => {
+    expect(detectAppProfile('Mail')).toBe('email');
+    expect(detectAppProfile('Microsoft Outlook')).toBe('email');
+    expect(detectAppProfile('Superhuman')).toBe('email');
+  });
+
+  it('returns an email prompt that adds no line breaks the speaker did not dictate', () => {
+    const prompt = getProfilePrompt('Mail');
+    expect(prompt.toLowerCase()).toContain('email');
+    expect(prompt.toLowerCase()).toContain('courteous');
+    expect(prompt).toContain('do not add a greeting/sign-off layout');
+  });
 });

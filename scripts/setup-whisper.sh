@@ -11,15 +11,14 @@ MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_NAME
 echo "=== Echo Setup ==="
 echo ""
 
-# 1. Check for dependencies
-for dep in rec cmake; do
+# 1. Check for dependencies (git + cmake to build whisper.cpp; sox is no longer
+#    needed — audio capture is native via scripts/record.swift).
+for dep in git cmake; do
   if command -v "$dep" &>/dev/null; then
     echo "✓ $dep is installed"
   else
-    pkg="$dep"
-    [ "$dep" = "rec" ] && pkg="sox"
-    echo "✗ $dep not found. Installing $pkg via Homebrew..."
-    brew install "$pkg"
+    echo "✗ $dep not found. Installing via Homebrew..."
+    brew install "$dep"
   fi
 done
 

@@ -27,6 +27,10 @@ describe('GroqRefiner', () => {
     const body = JSON.parse((init as RequestInit).body as string);
     expect(body.model).toBe('llama-3.1-8b-instant');
     expect(body.messages).toHaveLength(2);
-    expect(body.messages[1]).toEqual({ role: 'user', content: 'hello world' });
+    // The transcript is wrapped as delimited data (not passed bare) so the model
+    // cleans it instead of answering it when it reads like a question/request.
+    expect(body.messages[1].role).toBe('user');
+    expect(body.messages[1].content).toContain('hello world');
+    expect(body.messages[1].content).toContain('"""');
   });
 });

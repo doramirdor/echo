@@ -97,6 +97,10 @@ Be thorough. Output the document in markdown format."#,
         }
         fs::write(&path, &context).ok();
 
+        // Also refresh the deterministic (LLM-free) jargon cache from the same
+        // path, so STT biasing has exact identifiers even before the LLM doc.
+        crate::codebase::project_jargon::quick_scan(&resolved_path);
+
         Ok(context)
     })
     .await

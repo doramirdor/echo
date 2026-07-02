@@ -1,12 +1,15 @@
-//! Monitors the fn/Globe key and emits high-level gestures, mirroring
+//! Monitors the fn/Globe key and emits low-level, instant actions, mirroring
 //! `src/main/fnKeyMonitor.ts`:
-//! - `HoldStart`:  fn held past threshold (start hold-to-record)
-//! - `HoldEnd`:    fn released after a hold (stop hold-to-record)
-//! - `DoubleClick`: fn double-tapped (toggle recording on/off)
-//! - `SingleClick`: fn tapped once (stops toggle recording if active)
+//! - `Press`:       fn pressed down (every fn-down except a double-click's 2nd tap)
+//! - `Release`:     fn released (every fn-up)
+//! - `DoubleClick`: fn tapped twice within DOUBLE_CLICK_WINDOW_MS
+//!
+//! Gesture *meaning* (hold-to-talk vs hands-free vs stray tap) is decided by the
+//! consumer (`handle_fn_action` in lib.rs) from the press/release timing, so this
+//! monitor adds no latency and recording can begin the instant fn goes down.
 //!
 //! The `fn-monitor` Swift helper prints `fn-down`/`fn-up` lines (plus
-//! `im-granted`/`im-denied`/`im-unknown`/`ready`); the gesture timing is all
+//! `im-granted`/`im-denied`/`im-unknown`/`ready`); the double-click timing is all
 //! done here so the helper stays trivial.
 
 use std::path::Path;
@@ -19,23 +22,20 @@ use tokio::sync::{mpsc, Mutex};
 
 use crate::utils::swift_binary;
 
-const HOLD_THRESHOLD_MS: u64 = 120;
-const DOUBLE_CLICK_WINDOW_MS: u64 = 400;
+const DOUBLE_CLICK_WINDOW_MS: u64 = 280;
 const RESTART_DELAY_MS: u64 = 2000;
 const MAX_RESTART_ATTEMPTS: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FnAction {
-    HoldStart,
-    HoldEnd,
+    Press,
+    Release,
     DoubleClick,
-    SingleClick,
 }
 
 enum Internal {
     Line(String),
-    HoldTimeout(u64),
-    SingleTapTimeout(u64),
+    TapWindowTimeout(u64),
     ProcessExited,
 }
 
@@ -116,12 +116,11 @@ async fn run_once(
     }
 
     // ── Gesture state ──
+    // Classification (hold/hands-free/stray) lives in the consumer; here we only
+    // disambiguate a double-tap so recording can start instantly on the first press.
     let mut last_fn_up: Option<Instant> = None;
-    let mut in_hold = false;
     let mut waiting_for_second_tap = false;
-    let mut suppress_next_up = false;
-    let mut hold_gen: u64 = 0; // bump to cancel a pending hold timer
-    let mut tap_gen: u64 = 0; // bump to cancel a pending single-tap timer
+    let mut tap_gen: u64 = 0; // bump to cancel a pending tap-window timer
 
     while let Some(ev) = irx.recv().await {
         match ev {
@@ -138,43 +137,30 @@ async fn run_once(
                             .unwrap_or(false);
 
                     if within_double {
-                        // Second tap of a double-click.
+                        // Second tap of a double-click — emit the high-level gesture
+                        // so the consumer can latch into hands-free mode.
                         waiting_for_second_tap = false;
-                        tap_gen += 1; // cancel pending single-tap
-                        hold_gen += 1; // cancel any pending hold
-                        suppress_next_up = true;
+                        tap_gen += 1; // cancel pending tap-window timer
                         let _ = tx.send(FnAction::DoubleClick);
                     } else {
-                        // Arm the hold timer.
-                        hold_gen += 1;
-                        let g = hold_gen;
-                        let itx2 = itx.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(HOLD_THRESHOLD_MS)).await;
-                            let _ = itx2.send(Internal::HoldTimeout(g));
-                        });
+                        let _ = tx.send(FnAction::Press);
                     }
                 }
 
                 "fn-up" => {
                     last_fn_up = Some(Instant::now());
+                    let _ = tx.send(FnAction::Release);
 
-                    if suppress_next_up {
-                        suppress_next_up = false;
-                    } else if in_hold {
-                        in_hold = false;
-                        let _ = tx.send(FnAction::HoldEnd);
-                    } else {
-                        hold_gen += 1; // cancel pending hold (tap was too short)
-                        waiting_for_second_tap = true;
-                        tap_gen += 1;
-                        let g = tap_gen;
-                        let itx2 = itx.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(DOUBLE_CLICK_WINDOW_MS)).await;
-                            let _ = itx2.send(Internal::SingleTapTimeout(g));
-                        });
-                    }
+                    // Arm the double-click window; a fn-down within it is a
+                    // double-click, otherwise it lapses and the next press is fresh.
+                    waiting_for_second_tap = true;
+                    tap_gen += 1;
+                    let g = tap_gen;
+                    let itx2 = itx.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(DOUBLE_CLICK_WINDOW_MS)).await;
+                        let _ = itx2.send(Internal::TapWindowTimeout(g));
+                    });
                 }
 
                 "im-granted" => *im_status.lock().await = "granted".into(),
@@ -187,17 +173,9 @@ async fn run_once(
                 _ => {}
             },
 
-            Internal::HoldTimeout(g) => {
-                if g == hold_gen && !in_hold {
-                    in_hold = true;
-                    let _ = tx.send(FnAction::HoldStart);
-                }
-            }
-
-            Internal::SingleTapTimeout(g) => {
-                if g == tap_gen && waiting_for_second_tap {
+            Internal::TapWindowTimeout(g) => {
+                if g == tap_gen {
                     waiting_for_second_tap = false;
-                    let _ = tx.send(FnAction::SingleClick);
                 }
             }
         }

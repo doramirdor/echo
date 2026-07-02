@@ -1,4 +1,4 @@
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 
 export class OpenAIRefiner implements LLMRefiner {
   private apiKey: string;
@@ -20,6 +20,7 @@ export class OpenAIRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext: context.projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -34,7 +35,7 @@ export class OpenAIRefiner implements LLMRefiner {
         max_tokens: 1024,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: rawTranscription },
+          { role: 'user', content: buildRefineUserPrompt(rawTranscription) },
         ],
       }),
     });

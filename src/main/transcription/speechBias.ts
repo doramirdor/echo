@@ -20,6 +20,8 @@ export interface SpeechBiasInput {
   vocabularyList?: string;
   memoryEntries?: MemoryEntry[];
   projectContext?: string | null;
+  /** Deterministically-extracted project jargon (no LLM). See projectJargon.ts. */
+  projectTerms?: string[];
 }
 
 /**
@@ -77,7 +79,10 @@ export function buildSpeechBiasPrompt(input: SpeechBiasInput): string {
     for (const e of input.memoryEntries) push(e.term);
   }
 
-  // 3. Project jargon mined from the scanned codebase context.
+  // 3. Deterministically-extracted project jargon (dependency + symbol names).
+  if (input.projectTerms) input.projectTerms.forEach(push);
+
+  // 4. Project jargon mined from the scanned codebase context doc.
   if (input.projectContext) extractIdentifiers(input.projectContext).forEach(push);
 
   if (terms.length === 0) return '';

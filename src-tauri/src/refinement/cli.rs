@@ -12,7 +12,7 @@ pub async fn refine(
         dirs::home_dir().unwrap_or_default().display()
     );
 
-    let full_prompt = format!("{}\nRaw transcription:\n{}", system_prompt, raw);
+    let full_prompt = format!("{}\n\n{}", system_prompt, super::refiner::build_refine_user_prompt(raw));
 
     let cmd_line = if command == "claude" {
         format!("{} -p --model haiku", command)

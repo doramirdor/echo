@@ -45,10 +45,21 @@ whisper.cpp/
 models/
 *.bin
 
+# Shareable-build staging (scripts/package-mac.sh) — keep the dirs + .gitkeep
+# tracked, but never commit the staged prebuilts (helpers, whisper-cli, model).
+!src-tauri/bin/
+src-tauri/bin/*
+!src-tauri/bin/.gitkeep
+!src-tauri/models/
+src-tauri/models/*
+!src-tauri/models/.gitkeep
+
 # Local tooling / agent artifacts (not part of the project)
 .claude/
 .openbar/
 .impeccable/
+.github/hooks/
+.github/skills/
 
 # Raw design sources (kept local; used assets live in docs/img/)
 imgs/

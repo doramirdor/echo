@@ -5,8 +5,8 @@ export function toUserFacingError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   const lower = message.toLowerCase();
 
-  if (lower.includes('sox') || lower.includes('rec: command not found') || lower.includes('enoent') && lower.includes('rec')) {
-    return 'SoX is not installed. Run: brew install sox';
+  if (lower.includes('audio recorder') || lower.includes('record.swift') || lower.includes('rec: command not found')) {
+    return 'Audio recording is unavailable. Grant microphone access in System Settings → Privacy & Security → Microphone (and install Xcode Command Line Tools if prompted).';
   }
   if (lower.includes('whisper') && (lower.includes('not found') || lower.includes('not ready'))) {
     return 'Whisper is not set up. Open Settings and build/download Whisper, or run: npm run setup';

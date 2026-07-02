@@ -74,6 +74,7 @@ contextBridge.exposeInMainWorld('echo', {
   // History search
   searchRunLog: (query: string) => ipcRenderer.invoke('search-run-log', query),
   reinsertFromHistory: (text: string) => ipcRenderer.invoke('reinsert-from-history', text),
+  undoLastInsertion: () => ipcRenderer.invoke('undo-last-insertion'),
 
   // Re-insert text (for raw vs polished toggle)
   reinsertText: (text: string) => ipcRenderer.invoke('reinsert-text', text),

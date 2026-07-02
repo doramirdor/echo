@@ -93,6 +93,18 @@ pub async fn replace_live_text(refined: &str, live_char_count: usize, target_app
     Ok(())
 }
 
+/// Undo the last insertion: select back over the inserted characters and delete
+/// them (paste-empty), reusing the same select-and-replace path as the
+/// EMPTY-sentinel cleanup. Counts Unicode scalar values so multi-byte characters
+/// select correctly.
+pub async fn undo_last_insertion(text: &str, target_app: Option<&str>) -> Result<(), String> {
+    let count = text.chars().count();
+    if count == 0 {
+        return Ok(());
+    }
+    replace_live_text("", count, target_app).await
+}
+
 pub fn check_permissions() -> (bool, String) {
     let output = Command::new("osascript")
         .args(["-e", "tell application \"System Events\" to get name of first process"])

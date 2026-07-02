@@ -19,9 +19,9 @@ export async function checkAllProviders(
 ): Promise<ProviderStatus[]> {
   const results: ProviderStatus[] = [];
 
-  // SoX
-  const sox = AudioRecorder.checkDependencies();
-  results.push({ id: 'sox', label: 'SoX (audio)', ok: sox.ok, message: sox.message ?? 'OK' });
+  // Audio recording (native — no external sox dependency)
+  const recorder = AudioRecorder.checkDependencies();
+  results.push({ id: 'sox', label: 'Audio recording', ok: recorder.ok, message: recorder.message ?? 'OK' });
 
   // Accessibility
   const ax = TextInserter.checkPermissions();

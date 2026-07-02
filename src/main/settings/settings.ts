@@ -10,6 +10,7 @@ export type Tone = 'casual' | 'formal';
 export interface EchoSettings {
   hotkey: string;
   overlayHotkey: string;
+  undoHotkey: string;
   sttEngine: STTEngine;
   groqApiKey: string;
   deepgramApiKey: string;
@@ -41,8 +42,10 @@ export interface EchoSettings {
   startDelay: number;
   audioDevice: string;
   customPromptDate: string;
+  refinementEnabled: boolean;  // master switch for the LLM polish pass
   grammarCheck: boolean;
   autoFormatContent: boolean;  // auto-format dictated lists/emails/long passages
+  learnFromEdits: boolean;     // learn from the user's hand-edits to inserted text
   silenceDetection: boolean;
   silenceThreshold: number;  // 0–1 level below which counts as silence
   silenceDuration: number;   // ms of silence before auto-stopping
@@ -62,6 +65,7 @@ export interface EchoSettings {
 const defaults: EchoSettings = {
   hotkey: 'CommandOrControl+Shift+V',
   overlayHotkey: 'CommandOrControl+Shift+B',
+  undoHotkey: 'CommandOrControl+Shift+U',
   sttEngine: 'whisper',
   groqApiKey: '',
   deepgramApiKey: '',
@@ -77,7 +81,7 @@ const defaults: EchoSettings = {
   bedrockSecretAccessKey: '',
   bedrockRegion: 'us-east-1',
   bedrockModel: 'anthropic.claude-3-5-haiku-20241022-v1:0',
-  groqLlmModel: 'llama-3.1-8b-instant',
+  groqLlmModel: 'llama-3.3-70b-versatile',
   ollamaEndpoint: 'http://localhost:11434',
   ollamaModel: 'llama3.2',
   llamaEndpoint: 'http://localhost:8080',
@@ -93,8 +97,10 @@ const defaults: EchoSettings = {
   startDelay: 0,
   audioDevice: '',
   customPromptDate: '',
+  refinementEnabled: true,  // LLM polish on by default; toggle off for raw transcription
   grammarCheck: true,  // on by default for accuracy (zero-edit parity); matches the Tauri default
   autoFormatContent: true,  // format spoken lists/emails/passages automatically
+  learnFromEdits: true,  // learn recurring corrections the user makes to inserted text
   silenceDetection: true,
   silenceThreshold: 0.02,
   silenceDuration: 2000,

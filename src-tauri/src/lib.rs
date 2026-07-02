@@ -18,6 +18,7 @@ mod utils;
 use app_state::{AppState, EchoState};
 use settings::SettingsStore;
 use memory::store::MemoryStore;
+use memory::edit_learner::EditLearner;
 use templates::store::TemplateStore;
 use history::run_log::RunLog;
 use audio::recorder::AudioRecorder;
@@ -41,6 +42,7 @@ struct EchoApp {
     memory: MemoryStore,
     templates: TemplateStore,
     run_log: RunLog,
+    edit_learner: EditLearner,
     recorder: Arc<Mutex<AudioRecorder>>,
     live_transcriber: Arc<Mutex<LiveTranscriber>>,
     /// Input Monitoring permission as reported by the fn-monitor helper.
@@ -125,13 +127,19 @@ async fn toggle(app: AppHandle, state: tauri::State<'_, EchoApp>) -> Result<(), 
 
 #[tauri::command]
 async fn cancel_recording(app: AppHandle, state: tauri::State<'_, EchoApp>) -> Result<(), String> {
-    if state.app_state.is_recording().await {
-        state.recorder.lock().await.force_stop();
-        state.live_transcriber.lock().await.force_stop();
-        state.app_state.set_state(EchoState::Idle, None).await;
+    discard_recording(&app, &state).await;
+    Ok(())
+}
+
+/// Discard the current recording without running the pipeline (Esc cancel or a
+/// stray fn tap). Mirrors `cancelRecording()` in `src/main/index.ts`.
+async fn discard_recording(app: &AppHandle, echo: &EchoApp) {
+    if echo.app_state.is_recording().await {
+        echo.recorder.lock().await.force_stop();
+        echo.live_transcriber.lock().await.force_stop();
+        echo.app_state.set_state(EchoState::Idle, None).await;
         let _ = app.emit("state-change", ("idle", serde_json::json!({})));
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -386,12 +394,42 @@ async fn reinsert_from_history(state: tauri::State<'_, EchoApp>, text: String) -
     insertion::text_inserter::insert(&text, source_app.as_deref()).await
 }
 
+#[tauri::command]
+async fn undo_last_insertion(state: tauri::State<'_, EchoApp>) -> Result<(), String> {
+    undo_last_insertion_impl(&state).await;
+    Ok(())
+}
+
+/// Revert the most recent insertion. Shared by the undo hotkey and the
+/// `undo_last_insertion` command. One-shot: clears the record afterwards so a
+/// repeat press is a no-op rather than deleting more text. Never fires mid-pipeline.
+async fn undo_last_insertion_impl(echo: &EchoApp) {
+    if echo.app_state.is_busy().await {
+        log::info!("[undo] Ignored — pipeline is busy");
+        return;
+    }
+    let (text, source_app) = {
+        let inner = echo.app_state.inner.lock().await;
+        (inner.last_inserted_text.clone(), inner.last_insertion_source_app.clone())
+    };
+    let Some(text) = text else {
+        log::info!("[undo] Nothing to undo");
+        return;
+    };
+    match insertion::text_inserter::undo_last_insertion(&text, source_app.as_deref()).await {
+        Ok(()) => {
+            echo.app_state.clear_last_insertion().await;
+            log::info!("[undo] Reverted {} chars", text.chars().count());
+        }
+        Err(e) => log::warn!("[undo] Undo failed: {}", e),
+    }
+}
+
 // ── Recording control ─────────────────────────────────────────────────────────
 
 /// Reset the per-recording trigger flags.
 async fn clear_hold_flags(echo: &EchoApp) {
     let mut inner = echo.app_state.inner.lock().await;
-    inner.fn_hold_recording = false;
     inner.hotkey_hold_recording = false;
 }
 
@@ -418,7 +456,6 @@ async fn handle_hotkey_pressed(app: &AppHandle, echo: &EchoApp) {
         if matches!(state, EchoState::Idle | EchoState::Error) {
             {
                 let mut inner = echo.app_state.inner.lock().await;
-                inner.fn_hold_recording = false;
                 inner.hotkey_hold_recording = true;
             }
             begin_recording_with_delay(app, echo).await;
@@ -449,49 +486,114 @@ async fn handle_hotkey_released(app: &AppHandle, echo: &EchoApp) {
     }
 }
 
-/// High-level fn-key gestures from the Swift monitor.
-async fn handle_fn_action(app: &AppHandle, echo: &EchoApp, action: FnAction) {
+/// A press held at least this long counts as real speech and is kept (push-to-talk),
+/// so even a quick "yes"/"no" isn't dropped. A shorter press is treated as a mistake
+/// — either the first half of a double-click or a stray tap to be discarded.
+const FN_HOLD_MIN_MS: u128 = 100;
+/// How long to wait after a quick tap for a double-click before discarding the
+/// optimistic recording. Kept above the monitor's double-click window so a real
+/// double-click always lands before the stray-tap discard fires.
+const FN_TAP_RESOLVE_MS: u64 = 340;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FnSessionMode {
+    Idle,
+    Pending,
+    HandsFree,
+}
+
+/// Per-session gesture state for the optimistic instant-start machine. Mirrors the
+/// module-level `fnSessionMode`/`fnPressTime` vars in `src/main/index.ts`.
+struct FnGestureState {
+    mode: FnSessionMode,
+    press_at: std::time::Instant,
+    /// Bumped to invalidate a pending stray-tap discard timer.
+    stray_gen: u64,
+}
+
+/// Low-level fn-key actions from the Swift monitor. Recording starts the instant
+/// fn goes down (no hold threshold), then the gesture is classified from how the
+/// key is released:
+///   • hold ≥FN_HOLD_MIN_MS then release → push-to-talk: stop on release
+///   • quick double-tap                  → hands-free: stop on next tap / overlay
+///   • quick single tap, nothing         → stray: discard (no pipeline)
+async fn handle_fn_action(
+    app: &AppHandle,
+    echo: &EchoApp,
+    action: FnAction,
+    g: &mut FnGestureState,
+    resolve_tx: &mpsc::UnboundedSender<u64>,
+) {
     let state = echo.app_state.get_state().await;
     match action {
-        FnAction::HoldStart => {
-            if matches!(state, EchoState::Idle | EchoState::Error) {
-                {
-                    let mut inner = echo.app_state.inner.lock().await;
-                    inner.fn_hold_recording = true;
-                    inner.hotkey_hold_recording = false;
-                }
-                begin_recording_with_delay(app, echo).await;
-            }
-        }
-        FnAction::HoldEnd => {
-            let fn_hold = echo.app_state.inner.lock().await.fn_hold_recording;
-            if state == EchoState::Recording && fn_hold {
-                echo.app_state.inner.lock().await.fn_hold_recording = false;
-                stop_recording(app, echo).await;
-            }
-        }
-        FnAction::DoubleClick => match state {
-            EchoState::Idle | EchoState::Error => {
-                clear_hold_flags(echo).await;
-                begin_recording_with_delay(app, echo).await;
-            }
-            EchoState::Recording => {
-                let fn_hold = echo.app_state.inner.lock().await.fn_hold_recording;
-                if !fn_hold {
-                    stop_recording(app, echo).await;
-                }
-            }
-            _ => {}
-        },
-        FnAction::SingleClick => {
-            // A single fn tap stops toggle-style recording (started via double-click).
+        FnAction::Press => {
+            g.press_at = std::time::Instant::now();
+            g.stray_gen += 1; // cancel any pending stray-tap discard
             if state == EchoState::Recording {
-                let fn_hold = echo.app_state.inner.lock().await.fn_hold_recording;
-                if !fn_hold {
+                // While latched hands-free, a press stops; holds ignore extra presses.
+                if g.mode == FnSessionMode::HandsFree {
+                    g.mode = FnSessionMode::Idle;
                     stop_recording(app, echo).await;
                 }
+            } else if matches!(state, EchoState::Idle | EchoState::Error) {
+                g.mode = FnSessionMode::Pending;
+                clear_hold_flags(echo).await;
+                start_recording(app, echo).await; // instant — no delay/threshold
             }
         }
+        FnAction::Release => {
+            if state != EchoState::Recording || g.mode != FnSessionMode::Pending {
+                return;
+            }
+            if g.press_at.elapsed().as_millis() >= FN_HOLD_MIN_MS {
+                // Deliberate hold → push-to-talk stop.
+                g.mode = FnSessionMode::Idle;
+                stop_recording(app, echo).await;
+            } else {
+                // Quick tap: wait briefly for a double-click to latch hands-free,
+                // otherwise discard the few ms of optimistically-recorded audio.
+                g.stray_gen += 1;
+                let gen = g.stray_gen;
+                let resolve_tx = resolve_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(FN_TAP_RESOLVE_MS)).await;
+                    let _ = resolve_tx.send(gen);
+                });
+            }
+        }
+        FnAction::DoubleClick => {
+            g.stray_gen += 1; // cancel any pending stray-tap discard
+            match state {
+                EchoState::Recording => {
+                    if g.mode == FnSessionMode::Pending {
+                        // Upgrade the in-progress optimistic recording to hands-free.
+                        g.mode = FnSessionMode::HandsFree;
+                    } else if g.mode == FnSessionMode::HandsFree {
+                        g.mode = FnSessionMode::Idle;
+                        stop_recording(app, echo).await;
+                    }
+                }
+                EchoState::Idle | EchoState::Error => {
+                    // Safety net (e.g. a missed first press) — start hands-free.
+                    g.mode = FnSessionMode::HandsFree;
+                    clear_hold_flags(echo).await;
+                    start_recording(app, echo).await;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Fires when a quick-tap's double-click window lapses: if still an unclassified
+/// pending recording, discard it (it was a stray tap, not a hold or double-click).
+async fn handle_fn_stray_resolve(app: &AppHandle, echo: &EchoApp, gen: u64, g: &mut FnGestureState) {
+    if gen == g.stray_gen
+        && g.mode == FnSessionMode::Pending
+        && echo.app_state.is_recording().await
+    {
+        g.mode = FnSessionMode::Idle;
+        discard_recording(app, echo).await;
     }
 }
 
@@ -581,6 +683,12 @@ async fn start_recording(app: &AppHandle, echo: &EchoApp) {
         tokio::spawn(async move {
             if let Ok(fc) = tokio::task::spawn_blocking(context::window::capture_field_context).await {
                 let echo = app_handle.state::<EchoApp>();
+                // Before overwriting, diff this fresh read against what we last
+                // inserted to learn any hand-edits the user made to it (Wispr-style
+                // "learns from your corrections"). Best-effort, off the hot path.
+                if echo.settings.get(|s| s.learn_from_edits) {
+                    echo.edit_learner.learn_from_field(&fc.before, &fc.after);
+                }
                 let mut inner = echo.app_state.inner.lock().await;
                 inner.existing_field_text = if fc.before.is_empty() { None } else { Some(fc.before) };
                 inner.existing_field_text_after = if fc.after.is_empty() { None } else { Some(fc.after) };
@@ -663,12 +771,13 @@ async fn stop_recording(app: &AppHandle, echo: &EchoApp) {
     let memory = echo.memory.clone();
     let templates = echo.templates.clone();
     let run_log = echo.run_log.clone();
+    let edit_learner = echo.edit_learner.clone();
     let app_state = echo.app_state.clone();
     let recorder = echo.recorder.clone();
 
     // Run pipeline in background
     tokio::spawn(async move {
-        run_pipeline(&app_handle, &settings, &memory, &templates, &run_log, &app_state, &recorder).await;
+        run_pipeline(&app_handle, &settings, &memory, &templates, &run_log, &edit_learner, &app_state, &recorder).await;
     });
 }
 
@@ -678,6 +787,7 @@ async fn run_pipeline(
     memory: &MemoryStore,
     templates: &TemplateStore,
     run_log: &RunLog,
+    edit_learner: &EditLearner,
     app_state: &AppState,
     recorder: &Arc<Mutex<AudioRecorder>>,
 ) {
@@ -707,7 +817,7 @@ async fn run_pipeline(
         // Capture window context concurrently with transcription so its latency
         // (osascript/screenshot/LLM synthesis) is hidden behind the STT round trip
         // instead of adding to time-to-first-insertion. Only when an LLM consumes it.
-        let context_handle = if llm_provider != "none" && settings.get(|s| s.use_window_context) {
+        let context_handle = if settings.get(|s| s.refinement_enabled) && llm_provider != "none" && settings.get(|s| s.use_window_context) {
             let provider = settings.get(|s| s.context_provider.clone());
             let capture_shots = settings.get(|s| s.capture_screenshots);
             let claude_key = settings.get(|s| s.claude_api_key.clone());
@@ -749,6 +859,7 @@ async fn run_pipeline(
         let bias_prompt = transcription::speech_bias::build_speech_bias_prompt(
             &settings.get(|s| s.vocabulary_list.clone()),
             &memory.get_all(),
+            &codebase::project_jargon::load_jargon_terms(),
             codebase::analyzer::load_context().as_deref(),
         );
 
@@ -772,8 +883,17 @@ async fn run_pipeline(
             cleaned = template.content;
         }
 
-        // Voice commands
-        let voice_result = voice::commands::process_voice_commands(&cleaned, settings.get(|s| s.voice_commands_enabled));
+        // Voice commands. Enable the code-dictation grammar only in code/shell
+        // contexts so spoken symbols/case transforms never fire in prose/email/chat.
+        let active_profile = context::app_profiles::detect_app_profile(
+            source_app.as_deref(),
+            &settings.get(|s| s.app_profiles.clone()),
+        );
+        let voice_result = voice::commands::process_voice_commands(
+            &cleaned,
+            settings.get(|s| s.voice_commands_enabled),
+            active_profile == "coding" || active_profile == "shell",
+        );
         cleaned = voice_result.text;
 
         if cleaned.is_empty() {
@@ -797,7 +917,7 @@ async fn run_pipeline(
             String::new()
         };
 
-        if !voice_result.skip_refinement && llm_provider != "none" {
+        if !voice_result.skip_refinement && settings.get(|s| s.refinement_enabled) && llm_provider != "none" {
             app_state.set_state(EchoState::Refining, None).await;
             let _ = app.emit("state-change", ("refining", serde_json::json!({})));
 
@@ -817,6 +937,14 @@ async fn run_pipeline(
 
             let relevant = memory.find_relevant(&cleaned);
             let formatted = memory.format_for_prompt(&relevant);
+
+            // Preferences learned from the user's own edits to previously inserted text.
+            let edit_corrections = if settings.get(|s| s.learn_from_edits) {
+                let ec = edit_learner.format_for_prompt();
+                if ec.is_empty() { None } else { Some(ec) }
+            } else {
+                None
+            };
 
             // Await the context captured in parallel with transcription above.
             let mut window_context_str = match context_handle {
@@ -870,6 +998,7 @@ async fn run_pipeline(
                 existing_field_text_after: field_after,
                 tone: Some(settings.get(|s| s.tone.clone())),
                 content_type,
+                edit_corrections,
             };
 
             match refinement::refine(&llm_provider, &cleaned, &ctx, settings).await {
@@ -883,6 +1012,7 @@ async fn run_pipeline(
                                 "", injected_text.chars().count(), source_app.as_deref(),
                             ).await;
                         }
+                        app_state.clear_last_insertion().await;
                         app_state.set_state(EchoState::Idle, None).await;
                         let _ = app.emit("state-change", ("idle", serde_json::json!({})));
                         return Ok(());
@@ -910,6 +1040,7 @@ async fn run_pipeline(
                     existing_field_text_after: None,
                     tone: None,
                     content_type: None,
+                    edit_corrections: None,
                 };
                 match refinement::refine(&llm_provider, &refined_text, &grammar_ctx, settings).await {
                     Ok(g) => {
@@ -927,6 +1058,9 @@ async fn run_pipeline(
 
         app_state.set_state(EchoState::Inserting, None).await;
 
+        // The exact string that ends up in the field — snapshotted below so the
+        // next dictation can detect how the user edited it.
+        let inserted_final: String;
         if !injected_text.is_empty() {
             // Replace the text already on screen (live or instant-insert) with the
             // refined version. Skip the round trip if it would be a no-op.
@@ -942,6 +1076,7 @@ async fn run_pipeline(
             } else {
                 log::info!("[pipeline] Refined text matches what is already inserted — leaving as-is");
             }
+            inserted_final = final_text;
         } else {
             // Nothing on screen yet (no LLM and no live text): fresh insert,
             // continuing from the caret. Deterministic, works with no LLM.
@@ -953,10 +1088,27 @@ async fn run_pipeline(
             };
             log::info!("[pipeline] Inserting: \"{}\"", text_to_insert);
             insertion::text_inserter::insert(&text_to_insert, source_app.as_deref()).await?;
+            inserted_final = text_to_insert;
         }
 
         log::info!("[pipeline] Done");
         app_state.set_state(EchoState::Idle, None).await;
+
+        // Record the insertion so the undo hotkey can revert exactly this text.
+        app_state.set_last_insertion(inserted_final.clone(), source_app.clone()).await;
+
+        // Remember what we inserted (and the field text around it) so the *next*
+        // dictation can diff it against the user's hand-edits and learn corrections.
+        if settings.get(|s| s.learn_from_edits) {
+            let (before_anchor, after_anchor) = {
+                let inner = app_state.inner.lock().await;
+                (
+                    inner.existing_field_text.clone().unwrap_or_default(),
+                    inner.existing_field_text_after.clone().unwrap_or_default(),
+                )
+            };
+            edit_learner.record_insertion(&inserted_final, &before_anchor, &after_anchor);
+        }
 
         let _ = app.emit("state-change", ("idle", serde_json::json!({
             "lastResult": truncate_chars(&refined_text, 60),
@@ -984,6 +1136,8 @@ async fn run_pipeline(
     if let Err(e) = result {
         let msg = utils::errors::to_user_facing_error(&e);
         log::error!("[pipeline] ERROR: {}", msg);
+        // Nothing reliably landed — don't let undo delete unrelated text.
+        app_state.clear_last_insertion().await;
         app_state.set_state(EchoState::Error, Some(msg.clone())).await;
         let _ = app.emit("state-change", ("error", serde_json::json!({ "error": msg })));
 
@@ -1071,16 +1225,23 @@ pub fn run() {
         memory: MemoryStore::new(),
         templates: TemplateStore::new(),
         run_log: RunLog::new(),
+        edit_learner: EditLearner::new(),
         recorder: Arc::new(Mutex::new(AudioRecorder::new())),
         live_transcriber: Arc::new(Mutex::new(LiveTranscriber::new())),
         im_status: Arc::new(Mutex::new("unknown".to_string())),
     };
+
+    // Seed bundled prebuilts (native helpers, whisper-cli, model) into the app
+    // support dir on first run of a packaged build — so the recipient's Mac needs
+    // no Xcode tools / Homebrew / git / cmake / network. No-op in dev.
+    utils::provision::provision_bundled_assets();
 
     // Pre-compile Swift binaries (best-effort; recompiled on demand if stale).
     utils::swift_binary::ensure_swift_binary("fn-monitor", "scripts/fn-monitor.swift");
     utils::swift_binary::ensure_swift_binary("live-transcribe", "scripts/live-transcribe.swift");
     utils::swift_binary::ensure_swift_binary("transcribe", "scripts/transcribe.swift");
     utils::swift_binary::ensure_swift_binary("field-context", "scripts/field-context.swift");
+    utils::swift_binary::ensure_swift_binary("record", "scripts/record.swift");
 
     let show_onboarding_on_start: bool = !echo.settings.get(|s| s.onboarding_complete);
 
@@ -1115,6 +1276,7 @@ pub fn run() {
             check_providers, get_logs, copy_logs,
             get_templates, add_template, remove_template,
             get_project_context, reinsert_from_history,
+            undo_last_insertion,
         ])
         .setup(move |app| {
             // Hide from dock (menu bar app)
@@ -1173,16 +1335,34 @@ pub fn run() {
             // Create overlay
             create_overlay(app.handle());
 
-            // ── fn-key monitor (primary trigger): hold / double-click / single-click ──
+            // ── fn-key monitor (primary trigger): instant start, classify on release ──
             {
                 let (tx, mut rx) = mpsc::unbounded_channel::<FnAction>();
                 let im_status = app.state::<EchoApp>().im_status.clone();
                 fn_monitor::start(tx, im_status);
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    while let Some(action) = rx.recv().await {
-                        let echo = app_handle.state::<EchoApp>();
-                        handle_fn_action(&app_handle, &echo, action).await;
+                    // Stray-tap discard timers report back here with their generation.
+                    let (resolve_tx, mut resolve_rx) = mpsc::unbounded_channel::<u64>();
+                    let mut gesture = FnGestureState {
+                        mode: FnSessionMode::Idle,
+                        press_at: std::time::Instant::now(),
+                        stray_gen: 0,
+                    };
+                    loop {
+                        tokio::select! {
+                            maybe_action = rx.recv() => match maybe_action {
+                                Some(action) => {
+                                    let echo = app_handle.state::<EchoApp>();
+                                    handle_fn_action(&app_handle, &echo, action, &mut gesture, &resolve_tx).await;
+                                }
+                                None => break,
+                            },
+                            Some(gen) = resolve_rx.recv() => {
+                                let echo = app_handle.state::<EchoApp>();
+                                handle_fn_stray_resolve(&app_handle, &echo, gen, &mut gesture).await;
+                            }
+                        }
                     }
                 });
                 log::info!("[echo] fn key monitor started");
@@ -1224,6 +1404,23 @@ pub fn run() {
                 log::error!("[echo] Failed to register overlay hotkey {}: {}", overlay_hotkey_str, e);
             } else {
                 log::info!("[echo] Overlay hotkey registered: {}", overlay_hotkey_str);
+            }
+
+            // Undo-last-insertion hotkey.
+            let undo_hotkey = app.state::<EchoApp>().settings.get(|s| s.undo_hotkey.clone());
+            let undo_hotkey_str = undo_hotkey.replace("CommandOrControl", "CmdOrCtrl");
+            let app_handle_undo = app.handle().clone();
+            if let Err(e) = app.global_shortcut().on_shortcut(undo_hotkey_str.as_str(), move |_app, _shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    let app = app_handle_undo.clone();
+                    tauri::async_runtime::spawn(async move {
+                        undo_last_insertion_impl(&app.state::<EchoApp>()).await;
+                    });
+                }
+            }) {
+                log::error!("[echo] Failed to register undo hotkey {}: {}", undo_hotkey_str, e);
+            } else {
+                log::info!("[echo] Undo hotkey registered: {}", undo_hotkey_str);
             }
 
             // ── State watcher: drive tray label + overlay visibility from state ──

@@ -267,7 +267,7 @@
           <span class="badge" id="chk-input">Checking...</span>
         </div>
         <div class="check-row">
-          <span class="check-label">SoX audio tool</span>
+          <span class="check-label">Audio recording</span>
           <span class="badge" id="chk-sox">Checking...</span>
         </div>
       </div>
@@ -282,7 +282,7 @@
           &nbsp; Grant Echo under Input Monitoring, then restart Echo. Tip: set Keyboard &rarr; "Press fn key to" &rarr; "Do Nothing".
         </span>
         <span id="sox-hint" style="display:none; margin-top:4px;">
-          Install SoX: <code>brew install sox</code>
+          Grant microphone access in System Settings &rarr; Privacy &amp; Security &rarr; Microphone. If it still fails, install Xcode tools: <code>xcode-select --install</code>
         </span>
       </div>
 
@@ -336,11 +336,15 @@
     <!-- Step 2: LLM Provider -->
     <div class="step-page" id="page-2">
       <div class="step-title">Refinement</div>
-      <div class="step-desc">An LLM cleans up transcriptions — fixing grammar, spelling, and technical terms. Optional, and every option here is free or local.</div>
+      <div class="step-desc">An LLM cleans up transcriptions, fixing grammar, spelling, and technical terms. Optional. Groq just needs a free API key; the others run locally or via a CLI you already have.</div>
 
       <div class="card selected" id="card-claude-cli" data-llm="claude-cli">
         <div class="card-title">Claude CLI <span class="badge" id="claude-cli-badge" style="display:none"></span></div>
         <div class="card-desc">Uses your installed <code>claude</code> CLI. Fast and high quality.</div>
+      </div>
+      <div class="card" id="card-groq-llm" data-llm="groq">
+        <div class="card-title">Groq <span class="optional-tag">cloud · recommended</span></div>
+        <div class="card-desc">Fast, high-quality cleanup with a free API key. Nothing to install, and the best pick if you don't have the Claude CLI.</div>
       </div>
       <div class="card" id="card-codex-cli" data-llm="codex-cli">
         <div class="card-title">Codex CLI <span class="badge" id="codex-cli-badge" style="display:none"></span></div>
@@ -361,6 +365,13 @@
         <input type="text" id="ollama-endpoint" value="http://localhost:11434">
         <label>Model</label>
         <input type="text" id="ollama-model" value="llama3.2">
+      </div>
+
+      <!-- Groq refinement config -->
+      <div id="llm-groq-config" style="display:none" class="config-section">
+        <label>Groq API key</label>
+        <input type="password" id="llm-groq-key" placeholder="gsk_...">
+        <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Free at console.groq.com. The same key also works for Groq transcription.</div>
       </div>
 
       <div class="nav-row">
@@ -445,11 +456,11 @@
       var soxBadge = document.getElementById('chk-sox');
       var soxHint = document.getElementById('sox-hint');
       if (s.sox.ok) {
-        soxBadge.textContent = 'Installed';
+        soxBadge.textContent = 'Ready';
         soxBadge.className = 'badge badge-ok';
         soxHint.style.display = 'none';
       } else {
-        soxBadge.textContent = 'Not found';
+        soxBadge.textContent = 'Unavailable';
         soxBadge.className = 'badge badge-error';
         soxHint.style.display = '';
       }
@@ -632,9 +643,18 @@
       });
     });
 
-    function updateLLMUI() {
+    async function updateLLMUI() {
       var ollamaCfg = document.getElementById('ollama-config');
       ollamaCfg.style.display = selectedLLM === 'ollama' ? '' : 'none';
+      var groqCfg = document.getElementById('llm-groq-config');
+      groqCfg.style.display = selectedLLM === 'groq' ? '' : 'none';
+      if (selectedLLM === 'groq') {
+        var field = document.getElementById('llm-groq-key');
+        if (!field.value) {
+          var settings = await api.getSettings();
+          field.value = settings.groqApiKey || '';
+        }
+      }
     }
 
     async function checkCLIs() {
@@ -662,6 +682,14 @@
         codexBadge.textContent = 'Not found';
         codexBadge.className = 'badge badge-warn';
       }
+
+      // No CLI available (e.g. a non-dev Mac)? Steer to Groq — the only refiner
+      // that works with just a free key. Only override the untouched default.
+      if (!hasClaude && !hasCodex && selectedLLM === 'claude-cli') {
+        selectedLLM = 'groq';
+        selectCard(document.getElementById('page-2'), 'llm', 'groq');
+        updateLLMUI();
+      }
     }
 
     function saveLLM() {
@@ -671,6 +699,9 @@
         var model = document.getElementById('ollama-model').value.trim();
         if (endpoint) api.setSetting('ollamaEndpoint', endpoint);
         if (model) api.setSetting('ollamaModel', model);
+      } else if (selectedLLM === 'groq') {
+        var key = document.getElementById('llm-groq-key').value.trim();
+        if (key) api.setSetting('groqApiKey', key);
       }
     }
 

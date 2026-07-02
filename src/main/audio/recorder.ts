@@ -3,6 +3,11 @@ import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { ensureSwiftBinary, getBinaryPath } from '../utils/swiftBinary';
+
+// Native macOS capture helper (scripts/record.swift), compiled on demand.
+// Replaces the external sox/`rec` dependency: streams 16kHz mono 16-bit PCM.
+const RECORD_BIN = 'record';
 
 // WAV header for 16kHz mono 16-bit PCM — file/data sizes filled on stop
 function makeWavHeader(dataSize: number): Buffer {
@@ -46,6 +51,10 @@ export class AudioRecorder extends EventEmitter {
       throw new Error('Already recording');
     }
 
+    if (!ensureSwiftBinary(RECORD_BIN, 'scripts/record.swift')) {
+      throw new Error('Native audio recorder unavailable (failed to compile record.swift)');
+    }
+
     this.outputPath = path.join(os.tmpdir(), `echo-${Date.now()}.wav`);
     this.rawDataSize = 0;
 
@@ -53,23 +62,16 @@ export class AudioRecorder extends EventEmitter {
     this.writeStream = fs.createWriteStream(this.outputPath);
     this.writeStream.write(makeWavHeader(0));
 
-    // Build environment — set AUDIODEV if a specific device is requested
-    const env = { ...process.env };
-    if (deviceName) {
-      env.AUDIODEV = deviceName;
-      console.log(`[recorder] Using audio device: ${deviceName}`);
-    }
-
-    // Output raw PCM to stdout so we can compute audio levels in real-time
-    this.process = spawn('rec', [
-      '-r', '16000',
-      '-c', '1',
-      '-b', '16',
-      '-t', 'raw',
-      '-',
-    ], {
+    // The native helper streams 16kHz mono 16-bit raw PCM to stdout, so we can
+    // write the WAV and compute audio levels in real-time. Device name is
+    // passed through (currently advisory — capture follows the system default).
+    const args = deviceName ? [deviceName] : [];
+    this.process = spawn(getBinaryPath(RECORD_BIN), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env,
+    });
+
+    this.process.stderr?.on('data', (chunk: Buffer) => {
+      console.log(`[recorder] ${chunk.toString().trim()}`);
     });
 
     this.process.stdout?.on('data', (chunk: Buffer) => {
@@ -89,8 +91,7 @@ export class AudioRecorder extends EventEmitter {
     });
 
     this.process.on('error', (err) => {
-      console.error('[recorder] Failed to start sox/rec:', err.message);
-      console.error('[recorder] Install sox: brew install sox');
+      console.error('[recorder] Failed to start native recorder:', err.message);
       this.process = null;
     });
 
@@ -156,7 +157,8 @@ export class AudioRecorder extends EventEmitter {
         }
       });
 
-      // Send SIGTERM to gracefully stop sox
+      // Ask the helper to stop (flushes + exits); SIGTERM is the backstop.
+      try { proc.stdin?.write('stop\n'); } catch { /* pipe may be closed */ }
       proc.kill('SIGTERM');
     });
   }
@@ -183,6 +185,9 @@ export class AudioRecorder extends EventEmitter {
     const noiseReduction = options?.noiseReduction ?? true;
     const whisperMode = options?.whisperMode ?? false;
     const processedPath = wavPath.replace('.wav', '-clean.wav');
+
+    // SoX is optional — without it we transcribe the raw recording as-is.
+    if (!AudioRecorder.soxAvailable()) return wavPath;
 
     try {
       let inputPath = wavPath;
@@ -266,6 +271,9 @@ export class AudioRecorder extends EventEmitter {
       return wavPath;
     }
 
+    // Encoding needs SoX; without it we upload the WAV unchanged.
+    if (!AudioRecorder.soxAvailable()) return wavPath;
+
     const outPath = wavPath.replace(/\.wav$/, `.${fmt}`);
     try {
       // FLAC: -C 8 = max lossless compression (still ms-fast at this size).
@@ -328,17 +336,34 @@ export class AudioRecorder extends EventEmitter {
   }
 
   /**
-   * Check if sox is installed.
+   * Ensure the native audio recorder is available (compiles record.swift on
+   * first use). This is the hard pipeline dependency — no Homebrew needed.
    */
   static checkDependencies(): { ok: boolean; message: string } {
-    try {
-      execSync('which rec', { stdio: 'pipe' });
-      return { ok: true, message: 'sox is installed' };
-    } catch {
-      return {
-        ok: false,
-        message: 'sox is not installed. Run: brew install sox',
-      };
+    if (ensureSwiftBinary(RECORD_BIN, 'scripts/record.swift')) {
+      return { ok: true, message: 'native audio recorder ready' };
     }
+    return {
+      ok: false,
+      message: 'Audio recorder unavailable. Install Xcode Command Line Tools: xcode-select --install',
+    };
+  }
+
+  /**
+   * Whether the optional `sox` post-processing tool is on PATH. SoX is no
+   * longer required to record — it only enables noise reduction and upload
+   * compression as a bonus when present. Memoized.
+   */
+  private static _soxAvailable?: boolean;
+  static soxAvailable(): boolean {
+    if (AudioRecorder._soxAvailable === undefined) {
+      try {
+        execSync('which sox', { stdio: 'pipe' });
+        AudioRecorder._soxAvailable = true;
+      } catch {
+        AudioRecorder._soxAvailable = false;
+      }
+    }
+    return AudioRecorder._soxAvailable;
   }
 }

@@ -139,6 +139,19 @@ export class TextInserter {
     }
   }
 
+  /**
+   * Undo the last insertion: select back over the inserted characters and
+   * delete them (paste-empty), using the same proven select-and-replace path
+   * as the EMPTY-sentinel cleanup. Count graphemes via Array.from so emoji and
+   * combining marks select correctly.
+   */
+  async undoLastInsertion(text: string, targetApp?: string | null): Promise<void> {
+    const count = Array.from(text).length;
+    if (count === 0) return;
+    await this.replaceLiveText('', count, targetApp);
+    this.lastInsertedText = null;
+  }
+
   static checkPermissions(): { ok: boolean; message: string } {
     try {
       execSync(

@@ -1,4 +1,4 @@
-import { LLMRefiner, RefinementContext, buildSystemPrompt } from './refiner';
+import { LLMRefiner, RefinementContext, buildSystemPrompt, buildRefineUserPrompt } from './refiner';
 
 export class ClaudeRefiner implements LLMRefiner {
   private apiKey: string;
@@ -20,6 +20,7 @@ export class ClaudeRefiner implements LLMRefiner {
       existingFieldTextAfter: context.existingFieldTextAfter,
       projectContext: context.projectContext,
       tone: context.tone,
+      editCorrections: context.editCorrections,
     });
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -35,7 +36,7 @@ export class ClaudeRefiner implements LLMRefiner {
         max_tokens: 1024,
         system: systemPrompt,
         messages: [
-          { role: 'user', content: rawTranscription },
+          { role: 'user', content: buildRefineUserPrompt(rawTranscription) },
         ],
       }),
     });
