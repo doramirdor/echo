@@ -4,9 +4,9 @@
   "description": "Voice-to-text tool for macOS with LLM refinement",
   "scripts": {
     "start": "npm run electron:start",
-    "tauri": "cargo tauri",
+    "tauri": "tauri",
     "dev": "npm run electron:start",
-    "build": "cargo tauri build",
+    "build": "tauri build",
     "setup": "bash scripts/setup-whisper.sh",
     "test": "vitest run",
     "test:watch": "vitest",

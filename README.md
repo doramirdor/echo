@@ -84,6 +84,12 @@ are needed to build whisper.cpp — the onboarding wizard handles this automatic
 
 ## Quick start
 
+**Easiest:** download the latest `.dmg` from [Releases](https://github.com/doramirdor/echo/releases/latest),
+drag Echo to Applications, and launch. The build isn't notarized yet, so on first
+open right-click the app and choose **Open** (or run `xattr -cr /Applications/Echo.app`).
+
+**From source:**
+
 ```bash
 git clone https://github.com/doramirdor/echo.git
 cd echo
