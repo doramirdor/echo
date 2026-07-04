@@ -10,15 +10,15 @@
 </p>
 
 <p align="center">
-  <a href="https://doramirdor.github.io/echo-tauri/"><img src="https://img.shields.io/badge/website-echo-0A84FF?style=flat-square" alt="Website"></a>
+  <a href="https://doramirdor.github.io/echo/"><img src="https://img.shields.io/badge/website-echo-0A84FF?style=flat-square" alt="Website"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/platform-macOS-black?style=flat-square&logo=apple" alt="macOS">
-  <a href="https://github.com/doramirdor/echo-tauri/actions"><img src="https://img.shields.io/github/actions/workflow/status/doramirdor/echo-tauri/ci.yml?style=flat-square" alt="CI"></a>
+  <a href="https://github.com/doramirdor/echo/actions"><img src="https://img.shields.io/github/actions/workflow/status/doramirdor/echo/ci.yml?style=flat-square" alt="CI"></a>
   <img src="https://img.shields.io/badge/runs-100%25%20local-22c55e?style=flat-square" alt="100% local">
 </p>
 
 <p align="center">
-  <a href="https://doramirdor.github.io/echo-tauri/">Website</a> ·
+  <a href="https://doramirdor.github.io/echo/">Website</a> ·
   <a href="docs/USER_GUIDE.md">User Guide</a> ·
   <a href="docs/PRIVACY.md">Privacy</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -76,7 +76,7 @@ See the [User Guide](docs/USER_GUIDE.md) for the full tour.
 
 - macOS
 - [Node.js](https://nodejs.org/) v18+
-- [SoX](https://sox.sourceforge.net/) — `brew install sox` (audio capture)
+- [SoX](https://sox.sourceforge.net/) — `brew install sox` (optional: noise reduction; recording works without it)
 - Accessibility permission (for text insertion)
 
 For local Whisper (the default engine), `git` and `cmake` (`brew install cmake`)
@@ -85,8 +85,7 @@ are needed to build whisper.cpp — the onboarding wizard handles this automatic
 ## Quick start
 
 ```bash
-brew install sox
-git clone https://github.com/doramirdor/echo-tauri.git
+git clone https://github.com/doramirdor/echo.git
 cd echo
 npm install
 npm start

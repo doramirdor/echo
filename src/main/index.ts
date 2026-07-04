@@ -494,7 +494,11 @@ app.whenReady().then(() => {
   const axCheck = TextInserter.checkPermissions();
   if (!axCheck.ok) logger.warn('echo', axCheck.message ?? 'Accessibility not granted');
 
-  app.setLoginItemSettings({ openAtLogin: getSetting('openAtLogin') });
+  // In dev, process.execPath is the bare Electron shell — registering it as a
+  // login item would open an empty Electron window at login instead of Echo.
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: getSetting('openAtLogin') });
+  }
 
   if (!getSetting('onboardingComplete')) {
     showOnboarding();

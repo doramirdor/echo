@@ -35,7 +35,7 @@ export function setupIPC(
   ipcMain.handle('get-settings', () => getAllSettings());
   ipcMain.handle('set-setting', (_e, key: string, value: unknown) => {
     setSetting(key as keyof ReturnType<typeof getAllSettings>, value as never);
-    if (key === 'openAtLogin') {
+    if (key === 'openAtLogin' && app.isPackaged) {
       app.setLoginItemSettings({ openAtLogin: value as boolean });
     }
   });

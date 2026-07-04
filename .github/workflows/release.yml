@@ -2,7 +2,7 @@ name: Release
 
 # Publishes a signed macOS build and the Tauri updater manifest (latest.json) to
 # a GitHub Release whenever a v* tag is pushed. The app's updater endpoint
-# (https://github.com/doramirdor/echo-tauri/releases/latest/download/latest.json) then
+# (https://github.com/doramirdor/echo/releases/latest/download/latest.json) then
 # resolves to the newest release, mirroring electron-updater's GitHub provider.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
