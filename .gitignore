@@ -32,7 +32,7 @@ npm-debug.log*
 .DS_Store
 .AppleDouble
 .LSOverride
-Icon?
+Icon
 
 # Editor
 .vscode/
