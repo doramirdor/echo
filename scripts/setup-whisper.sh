@@ -44,6 +44,16 @@ else
   echo "✓ Built and installed whisper-cli to $BIN_DIR/"
 fi
 
+# whisper-server (same cmake build) powers Echo's warm-transcription path.
+# Best-effort: if the build didn't produce it, whisper-cli alone still works.
+SERVER_SRC="$TMP_DIR/whisper.cpp/build/bin/whisper-server"
+if [ -f "$BIN_DIR/whisper-server" ]; then
+  echo "✓ whisper-server binary already exists at $BIN_DIR/whisper-server"
+elif [ -f "$SERVER_SRC" ]; then
+  cp "$SERVER_SRC" "$BIN_DIR/whisper-server" || true
+  echo "✓ Installed whisper-server to $BIN_DIR/"
+fi
+
 # 3. Download model
 echo ""
 echo "--- Downloading Whisper model ---"

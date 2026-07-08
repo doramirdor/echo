@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import { WindowContext, screenshotToBase64, screenshotMediaType, compressScreenshot } from './windowContext';
 
 const CONTEXT_SYNTHESIS_PROMPT = `You are a context synthesis assistant for a speech-to-text dictation pipeline.
@@ -40,9 +41,9 @@ export async function synthesizeContext(
     return metadataOnlyContext(windowCtx);
   }
 
+  // Compress screenshot before sending to vision API
+  let optimizedPath = screenshotPath;
   try {
-    // Compress screenshot before sending to vision API
-    let optimizedPath = screenshotPath;
     if (screenshotPath) {
       optimizedPath = await compressScreenshot(screenshotPath);
     }
@@ -55,6 +56,15 @@ export async function synthesizeContext(
   } catch (err) {
     console.warn('[context-synth] Vision synthesis failed, falling back to metadata:', (err as Error).message);
     return metadataOnlyContext(windowCtx);
+  } finally {
+    // Best-effort cleanup of the compressed JPEG; the caller owns the original screenshot
+    if (optimizedPath && optimizedPath !== screenshotPath) {
+      try {
+        fs.unlinkSync(optimizedPath);
+      } catch {
+        // ignore — leaking one temp file beats failing the pipeline
+      }
+    }
   }
 }
 

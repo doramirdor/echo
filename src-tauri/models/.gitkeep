@@ -1,2 +1,0 @@
-# Keep this dir in git. scripts/package-mac.sh stages the Whisper model here
-# (gitignored — it's ~142MB) so it bundles into the .app as a resource.

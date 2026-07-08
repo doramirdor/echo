@@ -37,7 +37,9 @@ export class GroqTranscriber {
       '--max-time', '20',
       '-X', 'POST',
       'https://api.groq.com/openai/v1/audio/transcriptions',
-      '-H', `Authorization: Bearer ${this.apiKey}`,
+      // Auth header comes in via `--config -` on stdin — command-line args are
+      // visible to every local process (ps), the key must not appear there.
+      '--config', '-',
       '-F', `file=@${wavPath}`,
       '-F', 'model=whisper-large-v3-turbo',
       '-F', 'temperature=0',
@@ -46,7 +48,11 @@ export class GroqTranscriber {
     if (lang !== 'auto') args.push('-F', `language=${lang}`);
     if (opts?.prompt?.trim()) args.push('-F', `prompt=${opts.prompt.trim()}`);
 
-    const result = execFileSync('curl', args, { encoding: 'utf-8', timeout: 25000 });
+    const result = execFileSync('curl', args, {
+      encoding: 'utf-8',
+      timeout: 25000,
+      input: `header = "Authorization: Bearer ${this.apiKey}"\n`,
+    });
 
     const data = JSON.parse(result) as { text: string };
     return data.text.trim();

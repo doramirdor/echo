@@ -30,6 +30,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (vocabularyList) vocabularyList.value = s.vocabularyList || '';
     const useWindowContext = document.getElementById('useWindowContext');
     if (useWindowContext) useWindowContext.checked = s.useWindowContext !== false;
+    const captureScreenshots = document.getElementById('captureScreenshots');
+    if (captureScreenshots) captureScreenshots.checked = s.captureScreenshots || false;
     const contextProvider = document.getElementById('contextProvider');
     if (contextProvider) contextProvider.value = s.contextProvider || 'none';
     const claudeApiKey = document.getElementById('claudeApiKey');
@@ -86,7 +88,180 @@ document.addEventListener('DOMContentLoaded', () => {
     if (learnFromEdits) learnFromEdits.checked = s.learnFromEdits !== false;
     const audioDevice = document.getElementById('audioDevice');
     if (audioDevice) audioDevice.value = s.audioDevice || '';
+    const dictationHistoryContext = document.getElementById('dictationHistoryContext');
+    if (dictationHistoryContext) dictationHistoryContext.value = s.dictationHistoryContext != null ? s.dictationHistoryContext : 2;
+    HOTKEY_KEYS.forEach(k => {
+      if (document.getElementById(k)) lastGoodHotkeys[k] = s[k] || '';
+    });
+    currentSettings = s;
+    syncSharedKeyInputs();
     updateRefinementDependents();
+    updateSttFields();
+    updateRefinerFields();
+    renderSttSummary();
+    renderRefinerSummary();
+    renderPromptReadout();
+  }
+
+  // Last-loaded settings, so Edit panels can be (re)populated and the read-only
+  // summaries can be rendered without another round-trip.
+  let currentSettings = {};
+
+  // Shared API keys appear in two places (STT tab + Refinement tab) under
+  // different element ids that all write the same setting. Mirror the canonical
+  // value into every [data-setting] twin so both views stay in sync.
+  function syncSharedKeyInputs() {
+    document.querySelectorAll('[data-setting]').forEach(function(el) {
+      const key = el.getAttribute('data-setting');
+      if (currentSettings[key] != null) el.value = currentSettings[key];
+    });
+  }
+
+  // Human-readable engine labels for the read-only summaries.
+  const STT_ENGINE_LABELS = {
+    whisper: 'Whisper (on-device)',
+    macos: 'macOS Speech Recognition',
+    groq: 'Groq (cloud)',
+    deepgram: 'Deepgram (cloud)',
+    'openai-whisper': 'OpenAI Whisper (cloud)',
+  };
+  const LLM_PROVIDER_LABELS = {
+    'claude-cli': 'Claude CLI',
+    'codex-cli': 'Codex CLI',
+    'openai-api': 'OpenAI API',
+    'claude-api': 'Anthropic API (Claude)',
+    gemini: 'Google Gemini',
+    bedrock: 'AWS Bedrock',
+    ollama: 'Ollama (local)',
+    groq: 'Groq API',
+    'llama-local': 'Llama.cpp (local)',
+    none: 'None (raw transcript)',
+  };
+
+  // Show only the field group(s) that match the currently-selected engine
+  // inside an Edit panel, driven by the data-*-fields attribute.
+  function showFieldsFor(attr, value) {
+    document.querySelectorAll('[' + attr + ']').forEach(function(group) {
+      const matches = group.getAttribute(attr).split(/\s+/);
+      group.style.display = matches.indexOf(value) === -1 ? 'none' : '';
+    });
+  }
+  function updateSttFields() {
+    const sel = document.getElementById('sttEngine');
+    if (sel) showFieldsFor('data-stt-fields', sel.value);
+  }
+  function updateRefinerFields() {
+    const sel = document.getElementById('llmProvider');
+    if (sel) showFieldsFor('data-refiner-fields', sel.value);
+  }
+
+  function setText(id, text, muted) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('muted', !!muted);
+  }
+  function showRow(id, show) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? '' : 'none';
+  }
+
+  function renderSttSummary() {
+    const s = currentSettings;
+    const engine = s.sttEngine || 'whisper';
+    setText('stt-summary-engine', STT_ENGINE_LABELS[engine] || engine);
+    let label = 'Detail', detail = '', muted = true;
+    if (engine === 'whisper') {
+      label = 'Model'; detail = s.whisperModelName || 'ggml-base.en.bin'; muted = false;
+    } else if (engine === 'macos') {
+      label = 'Runs'; detail = 'On-device, no key';
+    } else {
+      const key = engine === 'deepgram' ? s.deepgramApiKey
+        : engine === 'openai-whisper' ? s.openaiApiKey : s.groqApiKey;
+      label = 'API key'; detail = key ? 'Set' : 'Not set'; muted = !key;
+    }
+    const detailLabel = document.getElementById('stt-summary-detail-label');
+    if (detailLabel) detailLabel.textContent = label;
+    setText('stt-summary-detail', detail, muted);
+  }
+
+  function renderRefinerSummary() {
+    const s = currentSettings;
+    const p = s.llmProvider || 'claude-cli';
+    setText('refiner-summary-engine', LLM_PROVIDER_LABELS[p] || p);
+    let label = 'Model', detail = '', muted = false, show = true;
+    if (p === 'openai-api') detail = s.openaiApiModel || 'gpt-4o-mini';
+    else if (p === 'claude-api') detail = s.claudeApiModel || 'claude-sonnet-4-20250514';
+    else if (p === 'groq') detail = s.groqLlmModel || 'llama-3.3-70b-versatile';
+    else if (p === 'gemini') detail = s.geminiModel || 'gemini-2.0-flash';
+    else if (p === 'bedrock') detail = s.bedrockModel || '—';
+    else if (p === 'ollama') detail = s.ollamaModel || '—';
+    else if (p === 'llama-local') detail = s.llamaModel || '—';
+    else if (p === 'claude-cli' || p === 'codex-cli') { label = 'Auth'; detail = 'CLI login'; muted = true; }
+    else { show = false; }
+    showRow('refiner-summary-detail-row', show);
+    if (show) {
+      const detailLabel = document.getElementById('refiner-summary-detail-label');
+      if (detailLabel) detailLabel.textContent = label;
+      setText('refiner-summary-detail', detail, muted);
+    }
+  }
+
+  function renderPromptReadout() {
+    const el = document.getElementById('prompt-readout');
+    if (!el) return;
+    const custom = (currentSettings.customPrompt || '').trim();
+    if (custom) {
+      el.textContent = custom;
+      el.classList.remove('muted');
+    } else {
+      el.textContent = 'Using the built-in default prompt.';
+      el.classList.add('muted');
+    }
+  }
+
+  // Generic Edit / Save / Cancel wiring for a summary+edit card. On Save it
+  // writes every input/select/textarea in the edit panel (keyed by data-setting
+  // or id) through the settings bridge, then re-renders the summary.
+  function setupEditableCard(opts) {
+    const editBtn = document.getElementById(opts.editBtn);
+    const saveBtn = document.getElementById(opts.saveBtn);
+    const cancelBtn = document.getElementById(opts.cancelBtn);
+    const summaryEl = document.getElementById(opts.summary);
+    const editEl = document.getElementById(opts.edit);
+    if (!editBtn || !saveBtn || !cancelBtn || !editEl) return;
+
+    function open() {
+      syncSharedKeyInputs();
+      if (opts.onOpen) opts.onOpen();
+      if (summaryEl) summaryEl.style.display = 'none';
+      editEl.style.display = '';
+      editBtn.style.display = 'none';
+    }
+    function close() {
+      editEl.style.display = 'none';
+      if (summaryEl) summaryEl.style.display = '';
+      editBtn.style.display = '';
+    }
+
+    editBtn.addEventListener('click', open);
+    cancelBtn.addEventListener('click', function() {
+      // Discard: restore edit fields from the last-saved settings.
+      loadSettings().then(close);
+    });
+    saveBtn.addEventListener('click', async function() {
+      const fields = editEl.querySelectorAll('input[id], select[id], textarea[id], [data-setting]');
+      for (const el of fields) {
+        const key = el.getAttribute('data-setting') || el.id;
+        if (!key) continue;
+        const val = el.type === 'number' ? Number(el.value) : el.value;
+        currentSettings[key] = val;
+        await api.setSetting(key, val);
+      }
+      if (opts.onSave) await opts.onSave();
+      if (opts.render) opts.render();
+      close();
+    });
   }
 
   // Grammar validation and auto-format only run inside the refinement pass, so
@@ -101,22 +276,97 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Auto-save on change
-  ['hotkey', 'recordingMode', 'startDelay', 'llmProvider', 'ollamaEndpoint', 'ollamaModel', 'customPrompt', 'vocabularyList', 'contextProvider', 'claudeApiKey', 'sttEngine', 'groqApiKey', 'audioDevice', 'deepgramApiKey', 'openaiApiKey', 'transcriptionLanguage', 'claudeApiModel', 'openaiApiModel', 'groqLlmModel', 'geminiApiKey', 'geminiModel', 'bedrockAccessKeyId', 'bedrockSecretAccessKey', 'bedrockRegion', 'bedrockModel', 'llamaEndpoint', 'llamaModel'].forEach(id => {
+  // Hotkey settings get registration feedback: 'set-setting' returns
+  // { ok: false, error } when re-registration fails (Electron). The Tauri
+  // bridge returns undefined — anything that isn't { ok: false } is success.
+  const HOTKEY_KEYS = ['hotkey', 'overlayHotkey', 'undoHotkey'];
+  const lastGoodHotkeys = {};
+
+  function hotkeyFeedbackEl(el) {
+    let fb = document.getElementById(el.id + '-feedback');
+    if (!fb) {
+      fb = document.createElement('div');
+      fb.id = el.id + '-feedback';
+      fb.setAttribute('role', 'alert');
+      fb.style.cssText = 'display:none;font-size:12px;margin-top:6px;color:var(--danger)';
+      el.insertAdjacentElement('afterend', fb);
+    }
+    return fb;
+  }
+
+  async function saveHotkeySetting(el) {
+    const val = el.value;
+    // Skip no-op saves — a post-revert blur would otherwise clear the feedback.
+    if (val === lastGoodHotkeys[el.id]) return;
+    const result = await api.setSetting(el.id, val);
+    const fb = hotkeyFeedbackEl(el);
+    if (result && typeof result === 'object' && result.ok === false) {
+      fb.textContent = (result.error || 'Could not register this hotkey') + ' — reverted to previous value.';
+      fb.style.display = 'block';
+      if (lastGoodHotkeys[el.id] !== undefined) el.value = lastGoodHotkeys[el.id];
+    } else {
+      lastGoodHotkeys[el.id] = val;
+      fb.style.display = 'none';
+      fb.textContent = '';
+    }
+  }
+
+  // Auto-save on change. NOTE: engine selection, per-provider keys/models and
+  // the refinement prompt are intentionally NOT here — they live inside Edit
+  // panels and commit only via their Save button (see setupEditableCard).
+  ['hotkey', 'overlayHotkey', 'undoHotkey', 'recordingMode', 'startDelay', 'vocabularyList', 'contextProvider', 'claudeApiKey', 'audioDevice', 'transcriptionLanguage', 'dictationHistoryContext'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
+    if (HOTKEY_KEYS.includes(id)) {
+      el.addEventListener('change', () => { saveHotkeySetting(el); });
+      el.addEventListener('blur', () => { saveHotkeySetting(el); });
+      return;
+    }
     el.addEventListener('change', () => {
       const val = el.type === 'number' ? Number(el.value) : el.value;
+      currentSettings[id] = val;
       api.setSetting(id, val);
     });
     el.addEventListener('blur', () => {
       const val = el.type === 'number' ? Number(el.value) : el.value;
+      currentSettings[id] = val;
       api.setSetting(id, val);
     });
   });
 
+  // Engine dropdowns live inside Edit panels: swap the visible field group as
+  // the selection changes (value is only persisted on Save).
+  const sttEngineSel = document.getElementById('sttEngine');
+  if (sttEngineSel) sttEngineSel.addEventListener('change', updateSttFields);
+  const llmProviderSel = document.getElementById('llmProvider');
+  if (llmProviderSel) llmProviderSel.addEventListener('change', updateRefinerFields);
+
+  // Editable summary+edit cards
+  setupEditableCard({
+    editBtn: 'stt-edit-btn', saveBtn: 'stt-save-btn', cancelBtn: 'stt-cancel-btn',
+    summary: 'stt-summary', edit: 'stt-edit',
+    onOpen: updateSttFields, render: renderSttSummary,
+  });
+  setupEditableCard({
+    editBtn: 'refiner-edit-btn', saveBtn: 'refiner-save-btn', cancelBtn: 'refiner-cancel-btn',
+    summary: 'refiner-summary', edit: 'refiner-edit',
+    onOpen: updateRefinerFields, render: renderRefinerSummary,
+  });
+  setupEditableCard({
+    editBtn: 'prompt-edit-btn', saveBtn: 'prompt-save-btn', cancelBtn: 'prompt-cancel-btn',
+    summary: 'prompt-readout', edit: 'prompt-edit',
+    render: renderPromptReadout,
+    onSave: async function() {
+      // Track when a custom prompt was set so staleness can be detected later.
+      const custom = (document.getElementById('customPrompt').value || '').trim();
+      const date = custom ? new Date().toISOString().split('T')[0] : '';
+      currentSettings.customPromptDate = date;
+      await api.setSetting('customPromptDate', date);
+    },
+  });
+
   // Checkbox settings
-  ['openAtLogin', 'useWindowContext', 'refinementEnabled', 'grammarCheck', 'autoFormatContent', 'learnFromEdits', 'silenceDetection', 'noiseReduction', 'whisperMode', 'voiceCommandsEnabled'].forEach(id => {
+  ['openAtLogin', 'useWindowContext', 'captureScreenshots', 'refinementEnabled', 'grammarCheck', 'autoFormatContent', 'learnFromEdits', 'silenceDetection', 'noiseReduction', 'whisperMode', 'voiceCommandsEnabled'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', function() {
@@ -462,17 +712,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) { /* ignore */ }
   }
 
-  // Track custom prompt date when user edits it
-  var promptEl = document.getElementById('customPrompt');
-  if (promptEl) {
-    promptEl.addEventListener('blur', function() {
-      if (promptEl.value.trim()) {
-        api.setSetting('customPromptDate', new Date().toISOString().split('T')[0]);
-      } else {
-        api.setSetting('customPromptDate', '');
-      }
-    });
-  }
+  // (Custom-prompt date is tracked when the Refinement Prompt card is saved —
+  // see the prompt setupEditableCard onSave above.)
 
   // Run log / history
   async function loadHistory() {
@@ -735,6 +976,20 @@ document.addEventListener('DOMContentLoaded', () => {
       var status = document.getElementById('copy-logs-status');
       if (status) {
         status.textContent = result.success ? 'Copied!' : 'Failed';
+        status.style.color = result.success ? 'var(--success)' : 'var(--danger)';
+        if (result.success) setTimeout(function() { status.textContent = ''; }, 2000);
+      }
+    });
+  }
+
+  // Copy debug logs (History tab) — same source as the sidebar button
+  var copyDebugLogsBtn = document.getElementById('copy-debug-logs-btn');
+  if (copyDebugLogsBtn) {
+    copyDebugLogsBtn.addEventListener('click', async function() {
+      var result = await api.copyLogs();
+      var status = document.getElementById('copy-debug-logs-status');
+      if (status) {
+        status.textContent = result.success ? 'Copied to clipboard.' : 'Copy failed.';
         status.style.color = result.success ? 'var(--success)' : 'var(--danger)';
         if (result.success) setTimeout(function() { status.textContent = ''; }, 2000);
       }
@@ -1085,9 +1340,31 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPerm('perm-input', 'perm-fix-input', { label: 'Not granted', cls: 'status-error', showFix: true, fixLabel: 'Open' });
       }
 
+      // Situational permissions. Screen Recording carries a real TCC status;
+      // Speech Recognition and Automation have no query API, so they read
+      // "unknown" and simply offer a shortcut to the relevant pane.
+      renderStdPerm('perm-screen', 'perm-fix-screen', s.screenRecording);
+      renderStdPerm('perm-speech', 'perm-fix-speech', s.speechRecognition);
+      renderStdPerm('perm-automation', 'perm-fix-automation', s.automation);
+
       var hint = document.getElementById('perm-hint');
       if (hint) hint.style.display = (mic.ok && axOk && im.ok) ? 'none' : 'block';
     } catch (e) { /* ignore */ }
+  }
+
+  // Generic status → badge mapping for permissions that share the microphone's
+  // { ok, status } shape but have no native prompt (so the fix is always "Open").
+  function renderStdPerm(badgeId, btnId, obj) {
+    var st = obj || { ok: false, status: 'unknown' };
+    if (st.ok) {
+      renderPerm(badgeId, btnId, { label: 'Granted', cls: 'status-ok', showFix: false });
+    } else if (st.status === 'not-determined') {
+      renderPerm(badgeId, btnId, { label: 'Not requested', cls: 'status-warn', showFix: true, fixLabel: 'Open' });
+    } else if (st.status === 'unknown') {
+      renderPerm(badgeId, btnId, { label: 'Unknown', cls: 'status-warn', showFix: true, fixLabel: 'Open' });
+    } else {
+      renderPerm(badgeId, btnId, { label: 'Not granted', cls: 'status-error', showFix: true, fixLabel: 'Open' });
+    }
   }
 
   var permFixMic = document.getElementById('perm-fix-mic');
@@ -1100,6 +1377,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (permFixAx) permFixAx.addEventListener('click', function() { api.openAccessibilitySettings(); });
   var permFixInput = document.getElementById('perm-fix-input');
   if (permFixInput) permFixInput.addEventListener('click', function() { if (api.openInputMonitoringSettings) api.openInputMonitoringSettings(); });
+  var permFixScreen = document.getElementById('perm-fix-screen');
+  if (permFixScreen) permFixScreen.addEventListener('click', function() { if (api.openScreenRecordingSettings) api.openScreenRecordingSettings(); });
+  var permFixSpeech = document.getElementById('perm-fix-speech');
+  if (permFixSpeech) permFixSpeech.addEventListener('click', function() { if (api.openSpeechRecognitionSettings) api.openSpeechRecognitionSettings(); });
+  var permFixAutomation = document.getElementById('perm-fix-automation');
+  if (permFixAutomation) permFixAutomation.addEventListener('click', function() { if (api.openAutomationSettings) api.openAutomationSettings(); });
+  var permRefresh = document.getElementById('perm-refresh');
+  if (permRefresh) permRefresh.addEventListener('click', loadPermissions);
   // Re-check when the window regains focus (e.g. after granting in System Settings)
   window.addEventListener('focus', loadPermissions);
 

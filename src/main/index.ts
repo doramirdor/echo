@@ -1,11 +1,12 @@
-import { app, globalShortcut } from 'electron';
-import { exec, execFileSync } from 'child_process';
+import { app, globalShortcut, Notification, shell } from 'electron';
+import { exec, execFile } from 'child_process';
 import { AppState, EchoState } from './appState';
 import { AudioRecorder } from './audio/recorder';
 import { WhisperService } from './transcription/whisperService';
 import { MacOSTranscriber } from './transcription/macosTranscriber';
 import { TextInserter } from './insertion/textInserter';
 import { undoLastInsertion } from './insertion/undo';
+import { joinContinuation } from './insertion/continuation';
 import { MemoryStore } from './memory/memoryStore';
 import { getEditLearner } from './memory/editLearner';
 import { LiveTranscriber } from './transcription/liveTranscriber';
@@ -22,7 +23,7 @@ import { setupIPC } from './ipc';
 import { logger } from './utils/logger';
 import { toUserFacingError } from './utils/errors';
 import { setupAutoUpdater } from './updater';
-import { ensureSwiftBinary } from './utils/swiftBinary';
+import { ensureSwiftBinaryAsync } from './utils/swiftBinary';
 
 // --- Globals ---
 const appState = new AppState();
@@ -63,6 +64,13 @@ function clearFnStrayTapTimer(): void {
 
 // --- Live injection state ---
 let liveInjectedText = '';  // full text injected so far during live recording
+// Live injections are serialized through this chain so chunks never interleave
+// and stopRecording can drain the in-flight paste before snapshotting the
+// injected-char count.
+let liveInjectQueue: Promise<void> = Promise.resolve();
+// Reentrancy guard: a second stop trigger during the (async) stop sequence
+// must not start a second pipeline.
+let stopInProgress = false;
 
 // --- Silence detection ---
 let silenceStart: number | null = null;
@@ -109,7 +117,7 @@ function onSilenceLevel(level: number): void {
       silenceTimer = setTimeout(() => {
         if (appState.state === EchoState.Recording) {
           console.log(`[echo] Silence detected (${duration}ms), auto-stopping`);
-          stopRecording();
+          void stopRecording();
         }
       }, duration);
     }
@@ -121,30 +129,41 @@ function onSilenceLevel(level: number): void {
 
 // --- Hold-to-talk key release detection ---
 let holdPollTimer: ReturnType<typeof setInterval> | null = null;
+let holdPollBusy = false;
 
 function startHoldDetection(): void {
   if (holdPollTimer) return; // prevent double-start
-  // Poll modifier keys every 100ms — when all modifiers are released, stop recording
+  // Poll modifier keys every 100ms — when all modifiers are released, stop
+  // recording. The osascript runs async so the poll never blocks the main
+  // process (level events, overlay updates, live-transcript forwarding).
   holdPollTimer = setInterval(() => {
-    try {
-      const result = execFileSync('osascript', [
-        '-e', 'use framework "AppKit"',
-        '-e', 'set f to (current application\'s NSEvent\'s modifierFlags()) as integer',
-        '-e', 'set m to f div 131072 mod 16',
-        '-e', 'if m = 0 then return "false"',
-        '-e', 'return "true"',
-      ], { encoding: 'utf-8', timeout: 500, stdio: 'pipe' }).trim();
-
-      if (result === 'false') {
+    if (holdPollBusy) return; // previous check still in flight
+    holdPollBusy = true;
+    execFile('osascript', [
+      '-e', 'use framework "AppKit"',
+      '-e', 'set f to (current application\'s NSEvent\'s modifierFlags()) as integer',
+      '-e', 'set m to f div 131072 mod 16',
+      '-e', 'if m = 0 then return "false"',
+      '-e', 'return "true"',
+    ], { encoding: 'utf-8', timeout: 500 }, (err, stdout) => {
+      holdPollBusy = false;
+      if (err) {
         stopHoldDetection();
+        return;
+      }
+      if (String(stdout).trim() === 'false') {
+        stopHoldDetection();
+        // Released during a pending startDelay: never start the recording —
+        // otherwise it would run until manually stopped.
+        cancelPendingStart();
         if (appState.state === EchoState.Recording && (hotkeyHoldRecording || getSetting('recordingMode') === 'hold')) {
           hotkeyHoldRecording = false;
-          stopRecording();
+          void stopRecording();
+        } else {
+          hotkeyHoldRecording = false;
         }
       }
-    } catch {
-      stopHoldDetection();
-    }
+    });
   }, 100);
 }
 
@@ -157,13 +176,20 @@ function stopHoldDetection(): void {
 
 // --- Toggle Recording (fallback hotkey + overlay click) ---
 function toggle(): void {
+  // A second trigger while a delayed start is pending cancels the pending start.
+  if (startDelayTimer) {
+    cancelPendingStart();
+    hotkeyHoldRecording = false;
+    return;
+  }
+
   // A live recording always stops on toggle — this is what powers the overlay
   // click-to-stop and the fallback hotkey, regardless of how recording was
   // started (fn hold, double-click, hotkey) or the configured recordingMode.
   if (appState.state === EchoState.Recording) {
     fnSessionMode = 'idle';
     hotkeyHoldRecording = false;
-    stopRecording();
+    void stopRecording();
     return;
   }
 
@@ -199,7 +225,7 @@ function handleFnAction(action: FnAction): void {
         // holds ignore extra presses (there's only one physical key).
         if (fnSessionMode === 'handsfree') {
           fnSessionMode = 'idle';
-          stopRecording();
+          void stopRecording();
         }
         return;
       }
@@ -215,7 +241,7 @@ function handleFnAction(action: FnAction): void {
       if (Date.now() - fnPressTime >= FN_HOLD_MIN_MS) {
         // Deliberate hold → push-to-talk stop.
         fnSessionMode = 'idle';
-        stopRecording();
+        void stopRecording();
       } else {
         // Quick tap: wait briefly for a double-click to latch hands-free,
         // otherwise discard the few ms of optimistically-recorded audio.
@@ -238,13 +264,24 @@ function handleFnAction(action: FnAction): void {
           fnSessionMode = 'handsfree';
         } else if (fnSessionMode === 'handsfree') {
           fnSessionMode = 'idle';
-          stopRecording();
+          void stopRecording();
         }
       } else if (appState.state === EchoState.Idle || appState.state === EchoState.Error) {
         // Safety net (e.g. a missed first press) — start hands-free directly.
         fnSessionMode = 'handsfree';
         hotkeyHoldRecording = false;
         startRecording();
+      }
+      break;
+
+    case 'combo':
+      // fn was used as a modifier for another key (e.g. fn+Delete, fn+←) rather
+      // than pressed on its own — discard the optimistic recording it triggered.
+      // The eventual 'release' is a no-op once mode is back to 'idle'.
+      clearFnStrayTapTimer();
+      if (appState.state === EchoState.Recording && fnSessionMode === 'pending') {
+        fnSessionMode = 'idle';
+        cancelRecording();
       }
       break;
   }
@@ -325,6 +362,10 @@ function startRecording(): void {
     if (getSetting('useWindowContext')) {
       const contextProvider = getSetting('contextProvider');
       if (contextProvider !== 'none') {
+        // Cheap metadata fallback, used if heavy synthesis blows its budget.
+        appState.contextFallbackPromise = captureWindowContext()
+          .then((winCtx) => formatWindowContext(winCtx))
+          .catch(() => '');
         appState.contextPromise = (async () => {
           try {
             const captureScreenshotsEnabled = getSetting('captureScreenshots');
@@ -344,6 +385,7 @@ function startRecording(): void {
           }
         })();
       } else {
+        appState.contextFallbackPromise = null;
         appState.contextPromise = captureWindowContext()
           .then((winCtx) => formatWindowContext(winCtx))
           .catch(() => '');
@@ -351,12 +393,7 @@ function startRecording(): void {
     } else {
       // Caret context for continuation is captured separately above.
       appState.contextPromise = null;
-    }
-
-    const sourceApp = appState.sourceApp as string | null;
-    if (sourceApp) {
-      const escaped = sourceApp.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      execFileSync('osascript', ['-e', `tell application "${escaped}" to activate`], { timeout: 2000 });
+      appState.contextFallbackPromise = null;
     }
 
     if (getSetting('silenceDetection')) {
@@ -366,19 +403,40 @@ function startRecording(): void {
     const message = toUserFacingError(err);
     logger.error('echo', `Recording start failed: ${message}`);
     appState.setState(EchoState.Error, message);
+    // Same auto-recovery the pipeline error path uses — otherwise the overlay
+    // and tray stay pinned on the error until the next manual trigger.
+    setTimeout(() => {
+      if (appState.state === EchoState.Error) {
+        appState.setState(EchoState.Idle);
+      }
+    }, 3000);
   }
 }
 
-function stopRecording(): void {
-  cancelPendingStart();
-  clearFnStrayTapTimer();
-  stopSilenceDetection();
-  stopHoldDetection();
-  fnSessionMode = 'idle';
-  hotkeyHoldRecording = false;
-  playRecordingStop();
-  liveTranscriber.stop();
-  runPipeline(appState, recorder, whisper, macosSTT, inserter, memory, liveInjectedText);
+async function stopRecording(): Promise<void> {
+  if (stopInProgress) return;
+  stopInProgress = true;
+  try {
+    cancelPendingStart();
+    clearFnStrayTapTimer();
+    stopSilenceDetection();
+    stopHoldDetection();
+    fnSessionMode = 'idle';
+    hotkeyHoldRecording = false;
+    playRecordingStop();
+    liveTranscriber.stop();
+    // Leave Recording synchronously so a second stop trigger can't start a
+    // second pipeline while we drain the live-injection queue below.
+    if (appState.state === EchoState.Recording) {
+      appState.setState(EchoState.Transcribing);
+    }
+    // Wait for any in-flight live paste so the pipeline's injected-char count
+    // matches what is actually on screen.
+    try { await liveInjectQueue; } catch { /* injection is best-effort */ }
+    await runPipeline(appState, recorder, whisper, macosSTT, inserter, memory, liveInjectedText);
+  } finally {
+    stopInProgress = false;
+  }
 }
 
 /** Discard the current recording without running the pipeline (stray tap / cancel). */
@@ -392,6 +450,9 @@ function cancelRecording(): void {
   if (appState.state === EchoState.Recording) {
     recorder.forceStop();
     liveTranscriber.forceStop();
+    liveInjectedText = '';
+    // Live chunks may have replaced the user's clipboard mid-recording.
+    void inserter.restoreUserClipboard();
     appState.setState(EchoState.Idle);
   }
 }
@@ -399,17 +460,47 @@ function cancelRecording(): void {
 // --- App Lifecycle ---
 app.dock?.hide();
 
+// Renderers only ever load bundled files. Block navigation anywhere else and
+// route attempted new windows to the default browser instead of a BrowserWindow
+// (which would carry the privileged preload bridge).
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file://')) event.preventDefault();
+  });
+  contents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://')) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+});
+
 app.whenReady().then(() => {
+  // Packaged builds have a stable app identity, so the Swift helpers should skip
+  // their "disclaim responsibility" trick and let TCC key Input Monitoring /
+  // Accessibility on "Echo" itself (one row, matching onboarding) instead of
+  // separate `fn-monitor` / `text-insert` rows. Helpers inherit this env. Dev
+  // leaves it unset so disclaim still shields grants from parent cdhash churn.
+  // (Mirror of the ECHO_NO_DISCLAIM gate in src-tauri/src/lib.rs.)
+  if (app.isPackaged) process.env.ECHO_NO_DISCLAIM = '1';
+
   createTray(appState, toggle, openSettings);
   createOverlay();
 
+  // IPC first — a failure anywhere below (e.g. a malformed user-typed hotkey)
+  // must not leave every window's `echo` API dead.
+  setupIPC(appState, whisper, memory, toggle, inserter, recorder, liveTranscriber,
+    () => ({ ok: fnKeyMonitor.inputMonitoring === 'granted', status: fnKeyMonitor.inputMonitoring }),
+    cancelRecording);
+
   // Update tray + overlay on state changes
-  appState.on('stateChange', (state: string) => {
+  appState.on('stateChange', (state: EchoState, previous: EchoState) => {
     if (state === EchoState.Error) playError();
     updateTray(appState, toggle, openSettings);
+    // Only a successful insertion (Inserting → Idle) flashes the green "Done"
+    // with the result — errors, cancels, and empty transcriptions go quiet.
+    const succeeded = state === EchoState.Idle && previous === EchoState.Inserting;
     sendOverlayState(appState.state, {
-      lastResult: appState.lastRefinedText?.substring(0, 60) ?? undefined,
-      rawResult: appState.lastTranscription ?? undefined,
+      lastResult: succeeded ? (appState.lastRefinedText?.substring(0, 60) ?? undefined) : undefined,
+      rawResult: succeeded ? (appState.lastTranscription ?? undefined) : undefined,
       error: appState.errorMessage ?? undefined,
     });
 
@@ -423,15 +514,26 @@ app.whenReady().then(() => {
 
   // Forward live transcription to overlay + inject finals into target app
   liveTranscriber.on('partial', (text: string) => sendLiveTranscript(text));
-  liveTranscriber.on('final', async (text: string) => {
+  liveTranscriber.on('final', (text: string) => {
     sendLiveTranscript(text);
-    if (appState.state === EchoState.Recording && text.trim()) {
-      const newText = text.trim();
-      const separator = liveInjectedText ? ' ' : '';
-      await inserter.insertLive(separator + newText);
-      liveInjectedText += separator + newText;
-      console.log(`[echo] Live injected: "${newText}" (total: ${liveInjectedText.length} chars)`);
-    }
+    const newText = text.trim();
+    if (!newText) return;
+    liveInjectQueue = liveInjectQueue
+      .then(async () => {
+        if (appState.state !== EchoState.Recording) return;
+        // First chunk continues the caret context — the same join the pipeline
+        // applies to the final replacement; later chunks join with a space.
+        const adjusted = liveInjectedText
+          ? ' ' + newText
+          : (appState.existingFieldText ? joinContinuation(appState.existingFieldText, newText) : newText);
+        // Only count text that actually landed — a phantom count would make
+        // the final replace delete the user's own text.
+        if (await inserter.insertLive(adjusted)) {
+          liveInjectedText += adjusted;
+          console.log(`[echo] Live injected: "${newText}" (total: ${liveInjectedText.length} chars)`);
+        }
+      })
+      .catch(() => { /* injection is best-effort */ });
   });
 
   // Forward audio levels to overlay for waveform visualization
@@ -439,52 +541,63 @@ app.whenReady().then(() => {
 
   // Start fn key monitor (primary hotkey)
   fnKeyMonitor.on('action', handleFnAction);
-  fnKeyMonitor.start();
-  console.log('[echo] fn key monitor started');
-
-  // Register fallback global hotkeys
-  const hotkey = getSetting('hotkey');
-  const registered = globalShortcut.register(hotkey, toggle);
-  if (!registered) {
-    console.error(`[echo] Failed to register hotkey: ${hotkey}`);
-  } else {
-    console.log(`[echo] Fallback hotkey registered: ${hotkey}`);
-  }
-
-  const overlayHotkey = getSetting('overlayHotkey');
-  const overlayRegistered = globalShortcut.register(overlayHotkey, toggleOverlay);
-  if (!overlayRegistered) {
-    console.error(`[echo] Failed to register overlay hotkey: ${overlayHotkey}`);
-  } else {
-    console.log(`[echo] Overlay hotkey registered: ${overlayHotkey}`);
-  }
-
-  const undoHotkey = getSetting('undoHotkey');
-  const undoRegistered = globalShortcut.register(undoHotkey, () => {
-    void undoLastInsertion(appState, inserter);
+  fnKeyMonitor.on('dead', (info: { inputMonitoring?: string }) => {
+    // The monitor exhausted its restart budget — the primary hotkey is gone
+    // until it recovers, so say so instead of failing silently.
+    const body = info?.inputMonitoring === 'denied'
+      ? 'fn hotkey stopped — grant Input Monitoring in System Settings > Privacy & Security, then restart Echo.'
+      : `fn hotkey stopped working — use ${getSetting('hotkey')} or restart Echo.`;
+    new Notification({ title: 'Echo', body }).show();
   });
-  if (!undoRegistered) {
-    console.error(`[echo] Failed to register undo hotkey: ${undoHotkey}`);
-  } else {
-    console.log(`[echo] Undo hotkey registered: ${undoHotkey}`);
-  }
 
-  setupIPC(appState, whisper, memory, toggle, inserter, recorder, liveTranscriber,
-    () => ({ ok: fnKeyMonitor.inputMonitoring === 'granted', status: fnKeyMonitor.inputMonitoring }));
+  // Compile Swift helpers off the main thread (the old execFileSync compiles
+  // froze the app for seconds at startup). fn-monitor first so the primary
+  // hotkey comes up ASAP, then the rest sequentially — no swiftc CPU spike.
+  void (async () => {
+    await ensureSwiftBinaryAsync('fn-monitor', 'scripts/fn-monitor.swift');
+    fnKeyMonitor.start();
+    console.log('[echo] fn key monitor started');
+    await ensureSwiftBinaryAsync('record', 'scripts/record.swift');
+    await ensureSwiftBinaryAsync('live-transcribe', 'scripts/live-transcribe.swift');
+    await ensureSwiftBinaryAsync('transcribe', 'scripts/transcribe.swift');
+    await ensureSwiftBinaryAsync('field-context', 'scripts/field-context.swift');
+    await ensureSwiftBinaryAsync('text-insert', 'scripts/text-insert.swift');
+    // Insertion posts keystrokes from the disclaimed `text-insert` helper (its
+    // own stable TCC identity), so it needs its own Accessibility grant. Prompt
+    // once so it appears in System Settings for the user to enable.
+    if (TextInserter.ensureAccessibility()) {
+      console.log('[echo] text-insert Accessibility already granted');
+    } else {
+      logger.warn('echo', 'text-insert needs Accessibility — prompted; enable it in System Settings');
+    }
 
-  // Pre-compile Swift binaries in background
-  ensureSwiftBinary('fn-monitor', 'scripts/fn-monitor.swift');
-  ensureSwiftBinary('live-transcribe', 'scripts/live-transcribe.swift');
-  ensureSwiftBinary('transcribe', 'scripts/transcribe.swift');
-  ensureSwiftBinary('field-context', 'scripts/field-context.swift');
-  ensureSwiftBinary('record', 'scripts/record.swift');
+    // Check dependencies once the helpers exist (the native recorder is the
+    // hard requirement — this also compiles it if the async pass failed).
+    const recorderCheck = AudioRecorder.checkDependencies();
+    if (!recorderCheck.ok) logger.warn('echo', recorderCheck.message ?? 'audio recorder not ready');
+  })();
+
+  // Register fallback global hotkeys. register() throws on malformed
+  // accelerators (the settings field is free text) — a bad one must not
+  // abort the rest of startup.
+  const safeRegister = (accel: string, cb: () => void, label: string): void => {
+    try {
+      if (globalShortcut.register(accel, cb)) {
+        console.log(`[echo] ${label} hotkey registered: ${accel}`);
+      } else {
+        console.error(`[echo] Failed to register ${label} hotkey: ${accel}`);
+      }
+    } catch (err) {
+      console.error(`[echo] Invalid ${label} hotkey "${accel}": ${(err as Error).message}`);
+    }
+  };
+  const hotkey = getSetting('hotkey');
+  safeRegister(hotkey, toggle, 'toggle');
+  safeRegister(getSetting('overlayHotkey'), toggleOverlay, 'overlay');
+  safeRegister(getSetting('undoHotkey'), () => { void undoLastInsertion(appState, inserter); }, 'undo');
 
   // Auto-update (packaged builds only)
   setupAutoUpdater();
-
-  // Check dependencies (native audio recorder must be available)
-  const recorderCheck = AudioRecorder.checkDependencies();
-  if (!recorderCheck.ok) logger.warn('echo', recorderCheck.message ?? 'audio recorder not ready');
 
   const whisperCheck = whisper.isReady();
   if (!whisperCheck.binary || !whisperCheck.model) {
@@ -517,6 +630,7 @@ app.on('before-quit', () => {
   recorder.forceStop();
   liveTranscriber.forceStop();
   fnKeyMonitor.forceStop();
+  whisper.shutdown();
   memory.flush();
   getEditLearner().flush();
   setTimeout(() => {
@@ -533,22 +647,30 @@ app.on('window-all-closed', () => {
   // Don't quit when all windows are closed (menu bar app)
 });
 
+// A crash mid-recording must tear the recording down — otherwise the mic
+// stays hot and every future start throws "Already recording".
+function handleFatalError(err: unknown): void {
+  if (appState.isRecording) {
+    recorder.forceStop();
+    liveTranscriber.forceStop();
+    stopSilenceDetection();
+    stopHoldDetection();
+    cancelPendingStart();
+    fnSessionMode = 'idle';
+    hotkeyHoldRecording = false;
+  }
+  appState.setState(EchoState.Error, toUserFacingError(err));
+  setTimeout(() => {
+    if (appState.state === EchoState.Error) appState.setState(EchoState.Idle);
+  }, 3000);
+}
+
 process.on('uncaughtException', (err) => {
   console.error('[echo] Uncaught exception:', err);
-  if (!isShuttingDown) {
-    appState.setState(EchoState.Error, err.message);
-    setTimeout(() => {
-      if (appState.state === EchoState.Error) appState.setState(EchoState.Idle);
-    }, 3000);
-  }
+  if (!isShuttingDown) handleFatalError(err);
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('[echo] Unhandled rejection:', reason);
-  if (!isShuttingDown) {
-    appState.setState(EchoState.Error, String(reason));
-    setTimeout(() => {
-      if (appState.state === EchoState.Error) appState.setState(EchoState.Idle);
-    }, 3000);
-  }
+  if (!isShuttingDown) handleFatalError(reason);
 });

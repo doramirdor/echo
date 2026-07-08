@@ -51,13 +51,16 @@ pub async fn transcribe(api_key: &str, wav_path: &Path, prompt: &str, language: 
 }
 
 fn transcribe_with_curl(api_key: &str, wav_path: &Path, prompt: &str, language: &str) -> Result<String, String> {
+    use std::io::Write;
     log::info!("[groq] Falling back to curl --http2");
     let mut args: Vec<String> = vec![
         "--silent".into(), "--show-error".into(), "--fail".into(), "--http2".into(),
         "--max-time".into(), "20".into(),
         "-X".into(), "POST".into(),
         "https://api.groq.com/openai/v1/audio/transcriptions".into(),
-        "-H".into(), format!("Authorization: Bearer {}", api_key),
+        // Auth header comes in via `--config -` on stdin — command-line args
+        // are visible to every local process (ps), the key must not appear there.
+        "--config".into(), "-".into(),
         "-F".into(), format!("file=@{}", wav_path.to_str().unwrap_or("")),
         "-F".into(), "model=whisper-large-v3-turbo".into(),
         "-F".into(), format!("language={}", language),
@@ -68,9 +71,21 @@ fn transcribe_with_curl(api_key: &str, wav_path: &Path, prompt: &str, language: 
         args.push("-F".into());
         args.push(format!("prompt={}", prompt));
     }
-    let output = std::process::Command::new("curl")
+    let mut child = std::process::Command::new("curl")
         .args(&args)
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("curl failed: {}", e))?;
+    if let Some(ref mut stdin) = child.stdin {
+        stdin
+            .write_all(format!("header = \"Authorization: Bearer {}\"\n", api_key).as_bytes())
+            .map_err(|e| format!("curl stdin: {}", e))?;
+    }
+    drop(child.stdin.take());
+    let output = child
+        .wait_with_output()
         .map_err(|e| format!("curl failed: {}", e))?;
 
     if !output.status.success() {

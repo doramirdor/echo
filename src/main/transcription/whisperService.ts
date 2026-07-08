@@ -1,9 +1,11 @@
-import { execFile, spawn } from 'child_process';
+import { execFile, spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import * as https from 'https';
 import * as http from 'http';
+import * as https from 'https';
+import * as net from 'net';
+import { pipeline } from 'stream';
 
 const APP_SUPPORT_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'echo');
 const MODELS_DIR = path.join(APP_SUPPORT_DIR, 'models');
@@ -19,15 +21,31 @@ export const WHISPER_MODELS = [
   { name: 'ggml-large-v3-turbo.bin', label: 'Large v3 Turbo', size: '~1.6GB' },
 ] as const;
 
+interface WarmServer {
+  modelPath: string;
+  ready?: Promise<number | null>;
+  proc?: ChildProcess;
+}
+
 export class WhisperService {
   private binaryPath: string;
+  private serverBinaryPath: string;
+  private serverState: WarmServer | null = null;
+  private serverDisabled = false;
+  private downloadsInFlight = new Map<string, Promise<void>>();
 
   constructor() {
     this.binaryPath = path.join(BIN_DIR, 'whisper-cli');
+    this.serverBinaryPath = path.join(BIN_DIR, 'whisper-server');
   }
 
   private getModelPath(modelName?: string): string {
     const name = modelName || 'ggml-base.en.bin';
+    // Model names arrive from the renderer and settings — keep them bare ggml
+    // filenames so they can't escape MODELS_DIR or rewrite the download URL.
+    if (!/^ggml-[A-Za-z0-9._-]+\.bin$/.test(name)) {
+      throw new Error(`Invalid whisper model name: ${name}`);
+    }
     return path.join(MODELS_DIR, name);
   }
 
@@ -35,9 +53,13 @@ export class WhisperService {
    * Check if whisper.cpp binary and model are available.
    */
   isReady(modelName?: string): { binary: boolean; model: boolean } {
+    let model = false;
+    try {
+      model = fs.existsSync(this.getModelPath(modelName));
+    } catch { /* invalid model name — report as not downloaded */ }
     return {
       binary: fs.existsSync(this.binaryPath),
-      model: fs.existsSync(this.getModelPath(modelName)),
+      model,
     };
   }
 
@@ -65,6 +87,18 @@ export class WhisperService {
     // Use most cores for speed, but leave one for the rest of the system.
     const threads = Math.max(1, os.cpus().length - 1);
     const language = opts?.language && opts.language.trim() ? opts.language.trim() : 'en';
+
+    // Warm-server path: whisper-server keeps the model + Metal context loaded
+    // between dictations, skipping the 300-800ms cold init the CLI pays every
+    // run. Any spawn/HTTP failure falls back silently to the CLI below.
+    const warm = await this.transcribeViaServer(wavPath, modelPath, threads, {
+      language,
+      prompt: opts?.prompt?.trim() || undefined,
+    });
+    if (warm !== null) {
+      console.log(`[whisper] Transcribed (warm): "${warm}"`);
+      return warm;
+    }
 
     const args = [
       '-m', modelPath,
@@ -95,6 +129,198 @@ export class WhisperService {
   }
 
   /**
+   * Kill the warm whisper-server child, if any. Called by the app entry on quit.
+   */
+  shutdown(): void {
+    this.stopServer();
+  }
+
+  private stopServer(): void {
+    const state = this.serverState;
+    this.serverState = null;
+    if (state?.proc && state.proc.exitCode === null) {
+      try { state.proc.kill(); } catch { /* already gone */ }
+    }
+  }
+
+  private async transcribeViaServer(
+    wavPath: string,
+    modelPath: string,
+    threads: number,
+    opts: { language: string; prompt?: string },
+  ): Promise<string | null> {
+    try {
+      // Cap the wait so a slow-loading model doesn't stall the first dictation;
+      // the server keeps warming in the background for the next run.
+      const port = await this.raceReady(this.ensureServer(modelPath, threads), 4000);
+      if (port === null) return null;
+      return await this.requestInference(port, wavPath, opts);
+    } catch {
+      return null; // silent fallback to the CLI path
+    }
+  }
+
+  private ensureServer(modelPath: string, threads: number): Promise<number | null> {
+    if (this.serverDisabled) return Promise.resolve(null);
+    if (this.serverState && this.serverState.modelPath !== modelPath) {
+      this.stopServer(); // model changed — restart on the new one
+    }
+    let state = this.serverState;
+    if (!state) {
+      if (!fs.existsSync(this.serverBinaryPath)) {
+        this.serverDisabled = true;
+        console.log('[whisper] whisper-server not installed — using one-shot CLI');
+        return Promise.resolve(null);
+      }
+      state = { modelPath };
+      this.serverState = state;
+      state.ready = this.startServer(state, threads);
+    }
+    return state.ready ?? Promise.resolve(null);
+  }
+
+  private async startServer(state: WarmServer, threads: number): Promise<number | null> {
+    try {
+      const port = await this.findFreePort();
+      const proc = spawn(this.serverBinaryPath, [
+        '-m', state.modelPath,
+        '--host', '127.0.0.1',
+        '--port', String(port),
+        '-t', String(threads),
+      ], { stdio: ['ignore', 'ignore', 'ignore'] });
+      state.proc = proc;
+      proc.on('error', () => { /* surfaces as waitForPort giving up */ });
+      proc.on('exit', () => {
+        // Crash after startup: clear state so the next dictation restarts it.
+        if (this.serverState === state) this.serverState = null;
+      });
+      if (this.serverState !== state) {
+        try { proc.kill(); } catch { /* already gone */ }
+        return null;
+      }
+      const ok = await this.waitForPort(port, proc, 30000);
+      if (!ok || this.serverState !== state) {
+        try { proc.kill(); } catch { /* already gone */ }
+        if (this.serverState === state) {
+          // Binary exists but never came up — don't retry every dictation.
+          this.serverState = null;
+          this.serverDisabled = true;
+          console.log('[whisper] whisper-server failed to start — using one-shot CLI');
+        }
+        return null;
+      }
+      console.log(`[whisper] whisper-server warm on 127.0.0.1:${port}`);
+      return port;
+    } catch {
+      if (this.serverState === state) {
+        this.serverState = null;
+        this.serverDisabled = true;
+      }
+      return null;
+    }
+  }
+
+  private findFreePort(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const srv = net.createServer();
+      srv.once('error', reject);
+      srv.listen(0, '127.0.0.1', () => {
+        const addr = srv.address();
+        const port = typeof addr === 'object' && addr ? addr.port : 0;
+        srv.close(() => (port ? resolve(port) : reject(new Error('No free port'))));
+      });
+    });
+  }
+
+  private waitForPort(port: number, proc: ChildProcess, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    return new Promise((resolve) => {
+      const attempt = () => {
+        if (proc.exitCode !== null) { resolve(false); return; }
+        const socket = net.connect({ host: '127.0.0.1', port });
+        socket.once('connect', () => { socket.destroy(); resolve(true); });
+        socket.once('error', () => {
+          socket.destroy();
+          if (Date.now() >= deadline) resolve(false);
+          else setTimeout(attempt, 250);
+        });
+      };
+      attempt();
+    });
+  }
+
+  private raceReady(ready: Promise<number | null>, capMs: number): Promise<number | null> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), capMs);
+      ready.then(
+        (port) => { clearTimeout(timer); resolve(port); },
+        () => { clearTimeout(timer); resolve(null); },
+      );
+    });
+  }
+
+  private requestInference(
+    port: number,
+    wavPath: string,
+    opts: { language: string; prompt?: string },
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let wav: Buffer;
+      try {
+        wav = fs.readFileSync(wavPath);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      const boundary = '----echo-whisper-' + Math.random().toString(16).slice(2);
+      const parts: Buffer[] = [];
+      const field = (name: string, value: string) => {
+        parts.push(Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+        ));
+      };
+      field('response_format', 'text');
+      field('language', opts.language);
+      if (opts.prompt) field('prompt', opts.prompt);
+      parts.push(Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.wav"\r\n` +
+        'Content-Type: audio/wav\r\n\r\n',
+      ));
+      parts.push(wav);
+      parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+      const body = Buffer.concat(parts);
+
+      const req = http.request({
+        host: '127.0.0.1',
+        port,
+        path: '/inference',
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': body.length,
+        },
+        timeout: 120000,
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('error', reject);
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          if (res.statusCode !== 200) {
+            reject(new Error(`whisper-server responded ${res.statusCode}`));
+            return;
+          }
+          resolve(text.trim());
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('whisper-server request timed out')));
+      req.on('error', reject);
+      req.end(body);
+    });
+  }
+
+  /**
    * List downloaded models.
    */
   listDownloadedModels(): string[] {
@@ -112,7 +338,11 @@ export class WhisperService {
   async downloadModel(onProgress?: (percent: number) => void, modelName?: string): Promise<void> {
     const name = modelName || 'ggml-base.en.bin';
     const modelPath = this.getModelPath(name);
-    const modelUrl = MODEL_BASE_URL + name;
+
+    // A second invocation while this model is downloading joins the in-flight
+    // download instead of double-writing the same .tmp file.
+    const inFlight = this.downloadsInFlight.get(name);
+    if (inFlight) return inFlight;
 
     fs.mkdirSync(MODELS_DIR, { recursive: true });
 
@@ -121,19 +351,49 @@ export class WhisperService {
       return;
     }
 
+    const promise = this.performDownload(name, modelPath, onProgress).finally(() => {
+      this.downloadsInFlight.delete(name);
+    });
+    this.downloadsInFlight.set(name, promise);
+    return promise;
+  }
+
+  private performDownload(
+    name: string,
+    modelPath: string,
+    onProgress?: (percent: number) => void,
+  ): Promise<void> {
+    const modelUrl = MODEL_BASE_URL + name;
     console.log(`[whisper] Downloading model from ${modelUrl}...`);
 
     return new Promise((resolve, reject) => {
-      const download = (url: string) => {
-        const client = url.startsWith('https') ? https : http;
-        client.get(url, (response) => {
-          if (response.statusCode === 301 || response.statusCode === 302) {
+      // Mid-transfer RSTs can fire several handlers; settle exactly once.
+      let settled = false;
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err); else resolve();
+      };
+
+      const download = (url: string, redirects = 0) => {
+        // Model weights are executable-adjacent input — never fetch them over
+        // plaintext HTTP, even via redirect, and don't follow redirect loops.
+        if (!url.startsWith('https://')) {
+          settle(new Error(`Refusing non-HTTPS model download URL: ${url}`));
+          return;
+        }
+        https.get(url, (response) => {
+          if ([301, 302, 303, 307, 308].includes(response.statusCode ?? 0)) {
             const location = response.headers.location;
-            if (location) { download(location); return; }
+            response.resume();
+            if (location && redirects < 5) { download(location, redirects + 1); return; }
+            settle(new Error('Download failed: too many redirects'));
+            return;
           }
 
           if (response.statusCode !== 200) {
-            reject(new Error(`Download failed with status ${response.statusCode}`));
+            response.resume();
+            settle(new Error(`Download failed with status ${response.statusCode}`));
             return;
           }
 
@@ -150,20 +410,26 @@ export class WhisperService {
             }
           });
 
-          response.pipe(file);
-
-          file.on('finish', () => {
-            file.close();
-            fs.renameSync(tmpPath, modelPath);
+          // pipeline (unlike .pipe) surfaces mid-transfer aborts — which emit
+          // no 'error' on the response, only 'aborted'/'close' — as
+          // ERR_STREAM_PREMATURE_CLOSE, and destroys both streams.
+          pipeline(response, file, (err) => {
+            if (err) {
+              try { fs.unlinkSync(tmpPath); } catch { /* already gone */ }
+              settle(err);
+              return;
+            }
+            try {
+              fs.renameSync(tmpPath, modelPath);
+            } catch (renameErr) {
+              try { fs.unlinkSync(tmpPath); } catch { /* already gone */ }
+              settle(renameErr as Error);
+              return;
+            }
             console.log(`[whisper] Model downloaded to ${modelPath}`);
-            resolve();
+            settle();
           });
-
-          file.on('error', (err) => {
-            fs.unlinkSync(tmpPath);
-            reject(err);
-          });
-        }).on('error', reject);
+        }).on('error', (err) => settle(err));
       };
 
       download(modelUrl);
@@ -231,6 +497,17 @@ export class WhisperService {
     }
     fs.copyFileSync(builtBinary, this.binaryPath);
     fs.chmodSync(this.binaryPath, 0o755);
+
+    // Same build produces whisper-server, which powers the warm-transcription
+    // path. Best-effort: the CLI path works without it.
+    try {
+      const builtServer = path.join(repoDir, 'build', 'bin', 'whisper-server');
+      if (fs.existsSync(builtServer)) {
+        fs.copyFileSync(builtServer, this.serverBinaryPath);
+        fs.chmodSync(this.serverBinaryPath, 0o755);
+      }
+    } catch { /* optional */ }
+
     onProgress?.('Done! whisper-cli installed.');
   }
 

@@ -1,4 +1,4 @@
-import { execSync, spawn, ChildProcess } from 'child_process';
+import { execFileSync, execSync, spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -41,7 +41,7 @@ export class AudioRecorder extends EventEmitter {
   }
 
   /**
-   * Start recording audio from the microphone using sox.
+   * Start recording audio from the microphone using the native Swift helper.
    * Records 16kHz mono 16-bit PCM, streams raw audio to stdout for level metering.
    * Emits 'level' events with normalized 0–1 amplitude values.
    * @param deviceName Optional audio input device name (e.g. "MacBook Pro Microphone")
@@ -60,6 +60,11 @@ export class AudioRecorder extends EventEmitter {
 
     // Write placeholder WAV header (will be finalized on stop)
     this.writeStream = fs.createWriteStream(this.outputPath);
+    // Without a handler a stream error becomes an uncaughtException
+    this.writeStream.on('error', (err) => {
+      console.error('[recorder] WAV write stream error:', err.message);
+      this.writeStream = null;
+    });
     this.writeStream.write(makeWavHeader(0));
 
     // The native helper streams 16kHz mono 16-bit raw PCM to stdout, so we can
@@ -99,21 +104,41 @@ export class AudioRecorder extends EventEmitter {
   }
 
   /**
-   * Finalize the WAV header with the correct data size.
+   * Flush buffered PCM to disk, then finalize the WAV header with the correct
+   * data size. Must complete before transcription reads the file, otherwise
+   * the tail of the recording can be truncated.
    */
-  private finalizeWav(): void {
-    if (!this.writeStream) return;
-    this.writeStream.end();
-
-    // Re-open and patch the header with actual sizes
-    const fd = fs.openSync(this.outputPath, 'r+');
-    const patch = Buffer.alloc(4);
-    patch.writeUInt32LE(36 + this.rawDataSize, 0);
-    fs.writeSync(fd, patch, 0, 4, 4);  // RIFF chunk size
-    patch.writeUInt32LE(this.rawDataSize, 0);
-    fs.writeSync(fd, patch, 0, 4, 40); // data subchunk size
-    fs.closeSync(fd);
+  private async finalizeWav(): Promise<void> {
+    const stream = this.writeStream;
+    if (!stream) return;
     this.writeStream = null;
+
+    // Wait for the stream to flush; a stalled stream (e.g. disk full) must
+    // not hang the pipeline, so cap the wait and patch what we have.
+    await new Promise<void>((res) => {
+      const guard = setTimeout(() => {
+        console.warn('[recorder] WAV stream flush timed out, finalizing anyway');
+        res();
+      }, 2000);
+      stream.end(() => {
+        clearTimeout(guard);
+        res();
+      });
+    });
+
+    try {
+      // Re-open and patch the header with actual sizes
+      const fd = fs.openSync(this.outputPath, 'r+');
+      const patch = Buffer.alloc(4);
+      patch.writeUInt32LE(36 + this.rawDataSize, 0);
+      fs.writeSync(fd, patch, 0, 4, 4);  // RIFF chunk size
+      patch.writeUInt32LE(this.rawDataSize, 0);
+      fs.writeSync(fd, patch, 0, 4, 40); // data subchunk size
+      fs.closeSync(fd);
+    } catch (err) {
+      // A failed header patch still leaves a usable raw file for the caller
+      console.warn('[recorder] Failed to patch WAV header:', (err as Error).message);
+    }
   }
 
   /**
@@ -130,12 +155,12 @@ export class AudioRecorder extends EventEmitter {
       this.process = null;
       let settled = false;
 
-      const timeout = setTimeout(() => {
+      const timeout = setTimeout(async () => {
         if (settled) return;
         settled = true;
-        console.warn('[recorder] sox did not exit in time, sending SIGKILL');
+        console.warn('[recorder] native recorder did not exit in time, sending SIGKILL');
         proc.kill('SIGKILL');
-        this.finalizeWav();
+        await this.finalizeWav();
         if (fs.existsSync(this.outputPath)) {
           resolve(this.outputPath);
         } else {
@@ -143,11 +168,11 @@ export class AudioRecorder extends EventEmitter {
         }
       }, 5000);
 
-      proc.on('close', () => {
+      proc.on('close', async () => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        this.finalizeWav();
+        await this.finalizeWav();
         if (fs.existsSync(this.outputPath)) {
           const stats = fs.statSync(this.outputPath);
           console.log(`[recorder] Saved ${(stats.size / 1024).toFixed(1)}KB to ${this.outputPath}`);
@@ -170,6 +195,14 @@ export class AudioRecorder extends EventEmitter {
     if (this.process) {
       this.process.kill('SIGKILL');
       this.process = null;
+    }
+    if (this.writeStream) {
+      try { this.writeStream.end(); } catch { /* ignore */ }
+      this.writeStream = null;
+    }
+    // A cancelled recording's partial WAV has no consumer — best-effort delete
+    if (this.outputPath) {
+      try { if (fs.existsSync(this.outputPath)) fs.unlinkSync(this.outputPath); } catch { /* ignore */ }
     }
   }
 
@@ -198,13 +231,13 @@ export class AudioRecorder extends EventEmitter {
         const denoisedPath = wavPath.replace('.wav', '-denoised.wav');
         try {
           // Extract noise profile from first 0.5s (assumed ambient noise before speech)
-          execSync(
-            `sox "${inputPath}" -n trim 0 0.5 noiseprof "${profilePath}"`,
+          execFileSync(
+            'sox', [inputPath, '-n', 'trim', '0', '0.5', 'noiseprof', profilePath],
             { stdio: 'pipe', timeout: 10000 }
           );
           // Apply noise reduction (0.21 = moderate reduction to avoid artifacts)
-          execSync(
-            `sox "${inputPath}" "${denoisedPath}" noisered "${profilePath}" 0.21`,
+          execFileSync(
+            'sox', [inputPath, denoisedPath, 'noisered', profilePath, '0.21'],
             { stdio: 'pipe', timeout: 10000 }
           );
           inputPath = denoisedPath;
@@ -232,8 +265,8 @@ export class AudioRecorder extends EventEmitter {
       }
       effects.push('norm -1');
 
-      execSync(
-        `sox "${inputPath}" "${processedPath}" ${effects.join(' ')}`,
+      execFileSync(
+        'sox', [inputPath, processedPath, ...effects.flatMap(e => e.split(' '))],
         { stdio: 'pipe', timeout: 10000 }
       );
 
@@ -278,9 +311,9 @@ export class AudioRecorder extends EventEmitter {
     try {
       // FLAC: -C 8 = max lossless compression (still ms-fast at this size).
       // OGG (Vorbis): -C 4 ≈ quality 4, small + fine for speech.
-      const enc = fmt === 'flac' ? '-C 8' : fmt === 'ogg' ? '-C 4' : '';
+      const enc = fmt === 'flac' ? ['-C', '8'] : fmt === 'ogg' ? ['-C', '4'] : [];
       const t0 = Date.now();
-      execSync(`sox "${wavPath}" ${enc} "${outPath}"`, { stdio: 'pipe', timeout: 10000 });
+      execFileSync('sox', [wavPath, ...enc, outPath], { stdio: 'pipe', timeout: 10000 });
       const before = fs.statSync(wavPath).size;
       const after = fs.statSync(outPath).size;
       console.log(

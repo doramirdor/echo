@@ -1,6 +1,10 @@
 use std::fs;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
+use std::time::Duration;
 
 fn models_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
@@ -16,8 +20,22 @@ fn binary_path() -> PathBuf {
     bin_dir().join("whisper-cli")
 }
 
+fn server_binary_path() -> PathBuf {
+    bin_dir().join("whisper-server")
+}
+
 fn model_path(model_name: &str) -> PathBuf {
     models_dir().join(model_name)
+}
+
+/// Model names arrive from the renderer and settings — keep them bare ggml
+/// filenames so they can't escape the models dir or rewrite the download URL
+/// (mirrors the check in whisperService.ts).
+fn is_valid_model_name(name: &str) -> bool {
+    name.starts_with("ggml-")
+        && name.ends_with(".bin")
+        && name.len() > "ggml-.bin".len()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 pub struct WhisperModel {
@@ -35,10 +53,14 @@ pub const WHISPER_MODELS: &[WhisperModel] = &[
 ];
 
 pub fn is_ready(model_name: &str) -> (bool, bool) {
-    (binary_path().exists(), model_path(model_name).exists())
+    let model = is_valid_model_name(model_name) && model_path(model_name).exists();
+    (binary_path().exists(), model)
 }
 
 pub fn transcribe(wav_path: &Path, model_name: &str, language: &str, prompt: &str) -> Result<String, String> {
+    if !is_valid_model_name(model_name) {
+        return Err(format!("Invalid whisper model name: {}", model_name));
+    }
     let bin = binary_path();
     let model = model_path(model_name);
 
@@ -82,6 +104,201 @@ pub fn transcribe(wav_path: &Path, model_name: &str, language: &str, prompt: &st
     Ok(text)
 }
 
+// ── Warm whisper-server path ────────────────────────────────────────────────
+// whisper-server keeps the model + Metal context loaded between dictations,
+// skipping the 300-800ms cold init the CLI pays every run. Any spawn/HTTP
+// failure falls back silently to the one-shot CLI (`transcribe` above). Mirrors
+// the WarmServer logic in `whisperService.ts`.
+
+struct WarmServer {
+    model_path: PathBuf,
+    port: u16,
+    child: std::process::Child,
+}
+
+static SERVER: LazyLock<Mutex<Option<WarmServer>>> = LazyLock::new(|| Mutex::new(None));
+/// Set once the server binary is missing or fails to come up, so we don't retry
+/// spawning it on every dictation.
+static SERVER_DISABLED: AtomicBool = AtomicBool::new(false);
+static BOUNDARY_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Kill the warm whisper-server child, if any. Called on app exit.
+pub fn shutdown() {
+    if let Ok(mut guard) = SERVER.lock() {
+        if let Some(mut s) = guard.take() {
+            let _ = s.child.kill();
+        }
+    }
+}
+
+/// Transcribe via the warm server. Returns `None` on any failure so the caller
+/// falls back to the CLI path.
+pub async fn transcribe_via_server(
+    wav_path: &Path,
+    model_name: &str,
+    language: &str,
+    prompt: &str,
+) -> Option<String> {
+    if SERVER_DISABLED.load(Ordering::Relaxed) {
+        return None;
+    }
+    if !is_valid_model_name(model_name) {
+        return None;
+    }
+    let model = model_path(model_name);
+    if !model.exists() {
+        return None;
+    }
+
+    let port = ensure_server(model).await?;
+    let lang = if language.is_empty() { "en".to_string() } else { language.to_string() };
+    let prompt = prompt.to_string();
+
+    match request_inference(port, wav_path, &lang, &prompt).await {
+        Some(text) => {
+            log::info!("[whisper] Transcribed (warm): \"{}\"", text);
+            Some(text)
+        }
+        None => {
+            // The server may have died — clear it so the next dictation restarts it.
+            shutdown();
+            None
+        }
+    }
+}
+
+/// Return the port of a running server for `model`, spawning one if needed. The
+/// blocking spawn + readiness wait runs off the async runtime.
+async fn ensure_server(model: PathBuf) -> Option<u16> {
+    {
+        let guard = SERVER.lock().ok()?;
+        if let Some(s) = guard.as_ref() {
+            if s.model_path == model {
+                return Some(s.port);
+            }
+        }
+    }
+    tokio::task::spawn_blocking(move || start_server_blocking(&model))
+        .await
+        .ok()
+        .flatten()
+}
+
+fn start_server_blocking(model: &Path) -> Option<u16> {
+    let bin = server_binary_path();
+    if !bin.exists() {
+        SERVER_DISABLED.store(true, Ordering::Relaxed);
+        log::info!("[whisper] whisper-server not installed — using one-shot CLI");
+        return None;
+    }
+
+    // A different model is loaded — restart on the new one.
+    {
+        let mut guard = SERVER.lock().ok()?;
+        if let Some(s) = guard.as_mut() {
+            if s.model_path == model {
+                return Some(s.port);
+            }
+            let _ = s.child.kill();
+            *guard = None;
+        }
+    }
+
+    let port = find_free_port()?;
+    let threads = std::cmp::max(1, num_cpus().saturating_sub(1)).to_string();
+    let child = Command::new(&bin)
+        .args([
+            "-m", model.to_str()?,
+            "--host", "127.0.0.1",
+            "--port", &port.to_string(),
+            "-t", &threads,
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    if !wait_for_port(port, 30_000) {
+        let mut child = child;
+        let _ = child.kill();
+        SERVER_DISABLED.store(true, Ordering::Relaxed);
+        log::info!("[whisper] whisper-server failed to start — using one-shot CLI");
+        return None;
+    }
+
+    log::info!("[whisper] whisper-server warm on 127.0.0.1:{}", port);
+    let mut guard = SERVER.lock().ok()?;
+    *guard = Some(WarmServer { model_path: model.to_path_buf(), port, child });
+    Some(port)
+}
+
+fn find_free_port() -> Option<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0").ok()?;
+    listener.local_addr().ok().map(|a| a.port())
+}
+
+fn wait_for_port(port: u16, timeout_ms: u64) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+    let addr = format!("127.0.0.1:{}", port);
+    while std::time::Instant::now() < deadline {
+        if let Ok(addr) = addr.parse() {
+            if TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok() {
+                return true;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    false
+}
+
+async fn request_inference(port: u16, wav_path: &Path, language: &str, prompt: &str) -> Option<String> {
+    let wav = fs::read(wav_path).ok()?;
+
+    let seq = BOUNDARY_SEQ.fetch_add(1, Ordering::Relaxed);
+    let boundary = format!("----echo-whisper-{}-{}", port, seq);
+
+    let mut body: Vec<u8> = Vec::with_capacity(wav.len() + 512);
+    let mut field = |name: &str, value: &str| {
+        body.extend_from_slice(
+            format!(
+                "--{}\r\nContent-Disposition: form-data; name=\"{}\"\r\n\r\n{}\r\n",
+                boundary, name, value
+            )
+            .as_bytes(),
+        );
+    };
+    field("response_format", "text");
+    field("language", language);
+    if !prompt.is_empty() {
+        field("prompt", prompt);
+    }
+    body.extend_from_slice(
+        format!(
+            "--{}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n",
+            boundary
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(&wav);
+    body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/inference", port))
+        .header("Content-Type", format!("multipart/form-data; boundary={}", boundary))
+        .timeout(Duration::from_secs(120))
+        .body(body)
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    Some(text.trim().to_string())
+}
+
 pub fn list_downloaded_models() -> Vec<String> {
     let dir = models_dir();
     if !dir.exists() {
@@ -102,6 +319,9 @@ pub async fn download_model(
     model_name: &str,
     progress_cb: impl Fn(u32) + Send + 'static,
 ) -> Result<(), String> {
+    if !is_valid_model_name(model_name) {
+        return Err(format!("Invalid whisper model name: {}", model_name));
+    }
     let model = model_path(model_name);
     if model.exists() {
         log::info!("[whisper] Model {} already exists", model_name);
@@ -186,6 +406,20 @@ pub async fn build_binary(progress_cb: impl Fn(&str) + Send + 'static) -> Result
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).ok();
+    }
+
+    // The same build produces whisper-server, which powers the warm-transcription
+    // path. Best-effort: the CLI path works without it.
+    let built_server = repo_dir.join("build/bin/whisper-server");
+    if built_server.exists() {
+        let server_bin = server_binary_path();
+        if fs::copy(&built_server, &server_bin).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&server_bin, fs::Permissions::from_mode(0o755)).ok();
+            }
+        }
     }
 
     progress_cb("Done! whisper-cli installed.");

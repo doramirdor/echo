@@ -8,6 +8,10 @@ const MEMORY_FILE = path.join(
   os.homedir(), 'Library', 'Application Support', 'echo', 'memory.json'
 );
 
+/** Context string marking entries added by VocabularyLearner.autoAccept — only these are ever evicted. */
+export const AUTO_LEARNED_CONTEXT = 'Auto-learned correction';
+const MAX_AUTO_LEARNED_ENTRIES = 300;
+
 export class MemoryStore {
   private entries: MemoryEntry[] = [];
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -22,6 +26,7 @@ export class MemoryStore {
         const data = fs.readFileSync(MEMORY_FILE, 'utf-8');
         this.entries = JSON.parse(data);
         console.log(`[memory] Loaded ${this.entries.length} entries`);
+        if (this.pruneAutoLearned()) this.scheduleSave();
       }
     } catch (err) {
       console.error('[memory] Failed to load:', err);
@@ -59,8 +64,27 @@ export class MemoryStore {
       updatedAt: now,
     };
     this.entries.push(newEntry);
+    this.pruneAutoLearned();
     this.scheduleSave();
     return newEntry;
+  }
+
+  /**
+   * Cap auto-learned entries so VocabularyLearner cannot grow the store without
+   * bound. User-curated vocabulary (any other context) is never evicted.
+   * Returns true if anything was removed.
+   */
+  private pruneAutoLearned(): boolean {
+    const auto = this.entries.filter(e => e.context === AUTO_LEARNED_CONTEXT);
+    if (auto.length <= MAX_AUTO_LEARNED_ENTRIES) return false;
+
+    const evict = auto
+      .sort((a, b) => a.useCount - b.useCount || a.updatedAt.localeCompare(b.updatedAt))
+      .slice(0, auto.length - MAX_AUTO_LEARNED_ENTRIES);
+    const evictIds = new Set(evict.map(e => e.id));
+    this.entries = this.entries.filter(e => !evictIds.has(e.id));
+    console.log(`[memory] Evicted ${evict.length} auto-learned entries (cap ${MAX_AUTO_LEARNED_ENTRIES})`);
+    return true;
   }
 
   update(id: string, updates: Partial<Omit<MemoryEntry, 'id' | 'createdAt'>>): MemoryEntry | null {

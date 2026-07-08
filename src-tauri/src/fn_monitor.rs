@@ -11,6 +11,14 @@
 //! The `fn-monitor` Swift helper prints `fn-down`/`fn-up` lines (plus
 //! `im-granted`/`im-denied`/`im-unknown`/`ready`); the double-click timing is all
 //! done here so the helper stays trivial.
+//!
+//! Self-restarts on crash up to `MAX_RESTART_ATTEMPTS`. When that budget is
+//! exhausted the monitor sends a *dead* signal exactly once (carrying the last
+//! Input Monitoring status) on `dead_tx` so lib.rs can surface it to the user,
+//! instead of silently going away. The budget is then refreshed every
+//! `RESTART_BUDGET_RESET_MS` and retries automatically, so a transient failure
+//! (e.g. flaky Input Monitoring state) never kills the primary hotkey for the
+//! rest of a days-long session.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -25,12 +33,20 @@ use crate::utils::swift_binary;
 const DOUBLE_CLICK_WINDOW_MS: u64 = 280;
 const RESTART_DELAY_MS: u64 = 2000;
 const MAX_RESTART_ATTEMPTS: u32 = 5;
+// After the restart budget is exhausted, allow a fresh burst of retries this
+// often — otherwise a transient failure (e.g. flaky Input Monitoring state)
+// would kill the primary hotkey for the rest of a days-long session.
+const RESTART_BUDGET_RESET_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FnAction {
     Press,
     Release,
     DoubleClick,
+    /// Another key went down while fn was held — fn is being used as a modifier
+    /// (e.g. fn+Delete, fn+←), not pressed on its own. The consumer should
+    /// cancel/ignore the in-progress optimistic recording.
+    Combo,
 }
 
 enum Internal {
@@ -41,12 +57,37 @@ enum Internal {
 
 /// Start the fn-key monitor. Emits gestures on `tx`; updates `im_status`
 /// ("granted"/"denied"/"unknown") as the helper reports Input Monitoring
-/// permission. Self-restarts on crash up to `MAX_RESTART_ATTEMPTS`.
-pub fn start(tx: mpsc::UnboundedSender<FnAction>, im_status: Arc<Mutex<String>>) {
+/// permission. Self-restarts on crash up to `MAX_RESTART_ATTEMPTS`; when that
+/// budget is exhausted it sends the last Input Monitoring status once on
+/// `dead_tx` (mirroring the TS `'dead'` event) and then keeps retrying every
+/// `RESTART_BUDGET_RESET_MS`.
+pub fn start(
+    tx: mpsc::UnboundedSender<FnAction>,
+    dead_tx: mpsc::UnboundedSender<String>,
+    im_status: Arc<Mutex<String>>,
+) {
     swift_binary::ensure_swift_binary("fn-monitor", "scripts/fn-monitor.swift");
 
     tauri::async_runtime::spawn(async move {
+        // Restart budget + dead-latch, shared between the run/restart cycle and
+        // the periodic budget-reset ticker below. Both live on this single task,
+        // so a plain local is enough — no lock needed.
         let mut attempts: u32 = 0;
+        let mut dead_emitted = false;
+
+        // Periodically refresh the restart budget so an exhausted monitor gets a
+        // fresh burst of retries instead of staying dead for the rest of the
+        // session. The ticker fires on the same task as the run loop, in between
+        // `run_once` invocations (i.e. while sleeping before a restart, or after
+        // the budget was exhausted and we're idling on the long sleep below).
+        let mut budget_reset = tokio::time::interval(Duration::from_millis(RESTART_BUDGET_RESET_MS));
+        // Measure each refresh as a full interval from when we last (re)armed the
+        // timer — not from accumulated missed ticks — so a long healthy run
+        // doesn't make the ticker fire instantly the moment we start waiting.
+        budget_reset.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The first tick completes immediately; skip it so we don't reset on start.
+        budget_reset.tick().await;
+
         loop {
             let bin = swift_binary::get_binary_path("fn-monitor");
             if !bin.exists() {
@@ -54,19 +95,46 @@ pub fn start(tx: mpsc::UnboundedSender<FnAction>, im_status: Arc<Mutex<String>>)
                 return;
             }
 
-            run_once(&bin, &tx, &im_status, &mut attempts).await;
+            // `run_once` returns when the helper process exits. `attempts` and
+            // `dead_emitted` are reset to 0/false from inside on every `ready`.
+            run_once(&bin, &tx, &im_status, &mut attempts, &mut dead_emitted).await;
 
-            attempts += 1;
-            if attempts >= MAX_RESTART_ATTEMPTS {
-                log::error!("[fn-monitor] Giving up after {} restart attempts", attempts);
-                return;
+            if attempts < MAX_RESTART_ATTEMPTS {
+                attempts += 1;
+                log::info!(
+                    "[fn-monitor] Exited; restarting (attempt {}/{})",
+                    attempts,
+                    MAX_RESTART_ATTEMPTS
+                );
+                // Sleep before restarting, but let the budget-reset ticker also
+                // fire during the wait.
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(RESTART_DELAY_MS)) => {}
+                    _ = budget_reset.tick() => {
+                        attempts = 0;
+                        dead_emitted = false;
+                        log::info!("[fn-monitor] Restart budget refreshed");
+                    }
+                }
+            } else {
+                // Budget exhausted — surface the failure once (the primary hotkey
+                // is gone until we recover) instead of failing silently.
+                if !dead_emitted {
+                    dead_emitted = true;
+                    let im = im_status.lock().await.clone();
+                    log::warn!("[fn-monitor] Restart budget exhausted — retrying in ~10 minutes");
+                    let _ = dead_tx.send(im);
+                }
+                // Idle for one full budget window (measured from now), then
+                // refresh the retry budget and loop back to try the helper again.
+                tokio::time::sleep(Duration::from_millis(RESTART_BUDGET_RESET_MS)).await;
+                attempts = 0;
+                dead_emitted = false;
+                // Re-arm the shared ticker so the fast-restart branch's next
+                // window is also measured from this refresh, not stale ticks.
+                budget_reset.reset();
+                log::info!("[fn-monitor] Restart budget refreshed — retrying");
             }
-            log::info!(
-                "[fn-monitor] Exited; restarting (attempt {}/{})",
-                attempts,
-                MAX_RESTART_ATTEMPTS
-            );
-            tokio::time::sleep(Duration::from_millis(RESTART_DELAY_MS)).await;
         }
     });
 }
@@ -76,6 +144,7 @@ async fn run_once(
     tx: &mpsc::UnboundedSender<FnAction>,
     im_status: &Arc<Mutex<String>>,
     attempts: &mut u32,
+    dead_emitted: &mut bool,
 ) {
     let mut child = match Command::new(bin)
         .stdin(std::process::Stdio::piped())
@@ -163,11 +232,18 @@ async fn run_once(
                     });
                 }
 
+                "fn-combo" => {
+                    let _ = tx.send(FnAction::Combo);
+                }
+
                 "im-granted" => *im_status.lock().await = "granted".into(),
                 "im-denied" => *im_status.lock().await = "denied".into(),
                 "im-unknown" => *im_status.lock().await = "unknown".into(),
                 "ready" => {
+                    // The helper came up cleanly — refresh the restart budget and
+                    // re-arm the dead signal so a future exhaustion fires again.
                     *attempts = 0;
+                    *dead_emitted = false;
                     log::info!("[fn-monitor] Running");
                 }
                 _ => {}

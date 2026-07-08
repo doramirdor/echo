@@ -6,6 +6,7 @@ const BIN_NAME = 'live-transcribe';
 
 export class LiveTranscriber extends EventEmitter {
   private proc: ChildProcess | null = null;
+  private lineBuffer = '';
 
   isReady(): boolean {
     return ensureSwiftBinary(BIN_NAME, 'scripts/live-transcribe.swift');
@@ -19,13 +20,17 @@ export class LiveTranscriber extends EventEmitter {
       return;
     }
 
-    this.proc = spawn(getBinaryPath(BIN_NAME), [], {
+    this.lineBuffer = '';
+    const proc = spawn(getBinaryPath(BIN_NAME), [], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    this.proc = proc;
 
-    this.proc.stdout?.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(Boolean);
-      for (const line of lines) {
+    proc.stdout?.on('data', (data: Buffer) => {
+      this.lineBuffer += data.toString();
+      const parts = this.lineBuffer.split('\n');
+      this.lineBuffer = parts.pop() ?? '';
+      for (const line of parts) {
         if (line.startsWith('partial:')) {
           this.emit('partial', line.slice(8));
         } else if (line.startsWith('final:')) {
@@ -34,35 +39,36 @@ export class LiveTranscriber extends EventEmitter {
       }
     });
 
-    this.proc.stderr?.on('data', (data: Buffer) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       console.log(`[live-transcribe] ${data.toString().trim()}`);
     });
 
-    this.proc.on('close', () => {
-      this.proc = null;
+    // Only clear this.proc if it still points at *this* process — a stale
+    // close/error from a drained previous session must not null a newer one.
+    proc.on('close', () => {
+      if (this.proc === proc) this.proc = null;
     });
 
-    this.proc.on('error', (err) => {
+    proc.on('error', (err) => {
       console.error('[live-transcribe] error:', err.message);
-      this.proc = null;
+      if (this.proc === proc) this.proc = null;
     });
   }
 
   stop(): void {
-    if (!this.proc) return;
+    const proc = this.proc;
+    if (!proc) return;
+    // Detach immediately so a rapid re-record can start() a fresh session
+    // while this one drains its final result.
+    this.proc = null;
     try {
-      this.proc.stdin?.write('stop\n');
-      const proc = this.proc;
+      proc.stdin?.write('stop\n');
       // Give it a moment to flush final result, then force kill with SIGKILL
       setTimeout(() => {
-        if (this.proc === proc && this.proc) {
-          try { this.proc.kill('SIGKILL'); } catch { /* already dead */ }
-          this.proc = null;
-        }
+        try { proc.kill('SIGKILL'); } catch { /* already dead */ }
       }, 1500);
     } catch {
-      try { this.proc?.kill('SIGKILL'); } catch { /* already dead */ }
-      this.proc = null;
+      try { proc.kill('SIGKILL'); } catch { /* already dead */ }
     }
   }
 
@@ -70,8 +76,9 @@ export class LiveTranscriber extends EventEmitter {
    * Force-kill immediately. Used during app shutdown.
    */
   forceStop(): void {
-    if (!this.proc) return;
-    try { this.proc.kill('SIGKILL'); } catch { /* already dead */ }
+    const proc = this.proc;
+    if (!proc) return;
     this.proc = null;
+    try { proc.kill('SIGKILL'); } catch { /* already dead */ }
   }
 }

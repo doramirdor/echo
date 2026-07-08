@@ -18,16 +18,22 @@ npm install
 bash scripts/package-mac.sh
 ```
 
-This compiles the native helpers, builds `whisper-cli` + downloads the model
-(first time only), bundles them into the app, and produces:
+This compiles the native helpers, builds `whisper-cli`, bundles them into the
+app, and produces a small (~25 MB) DMG:
 
 ```
 src-tauri/target/release/bundle/dmg/Echo_0.1.0_<arch>.dmg
 ```
 
-Everything the app needs is baked in — on first launch it copies the bundled
-helpers + Whisper model into `~/Library/Application Support/echo`, so your friend
-needs no Xcode tools, Homebrew, git/cmake, or internet.
+The helpers + `whisper-cli` are baked in — on first launch the app copies them
+into `~/Library/Application Support/echo`, so your friend needs no Xcode tools,
+Homebrew, or git/cmake.
+
+> **The Whisper model (~142 MB) is not bundled** — it keeps the DMG small. On
+> first launch, onboarding downloads it once (Setup Whisper → the model lands in
+> `~/Library/Application Support/echo/models`). So your friend **does need
+> internet the first time** they set up Whisper. After that, transcription is
+> fully offline.
 
 > **Chip match:** this `.dmg` is built for your Mac's chip (Apple Silicon or
 > Intel) and runs on a friend with the **same chip**. For a universal build that
@@ -60,11 +66,14 @@ Copy-paste this to them:
 >    - **Microphone** (to hear you)
 >    - **Accessibility** (to type the text for you)
 >    - **Input Monitoring** (for the `fn` hotkey) — then **quit and reopen Echo**
-> 4. On the **Refinement** step, get a free key at **console.groq.com** and paste
+> 4. On the **Transcription** step, click **Setup Whisper**. This downloads the
+>    speech model (~142 MB) once — you'll need internet for this. After it
+>    finishes, transcription works fully offline.
+> 5. On the **Refinement** step, get a free key at **console.groq.com** and paste
 >    it in. This is what cleans up grammar and spelling. (Skip it and you'll still
 >    get raw transcription, just without the polish.) Transcription itself works
 >    offline with no key.
-> 5. Press **`fn`** (or the menu-bar icon) and start talking. That's it.
+> 6. Press **`fn`** (or the menu-bar icon) and start talking. That's it.
 
 ---
 

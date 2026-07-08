@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { AudioRecorder } from '../audio/recorder';
 import { TextInserter } from '../insertion/textInserter';
 import { WhisperService } from '../transcription/whisperService';
@@ -95,8 +95,9 @@ export async function checkAllProviders(
 }
 
 function cliExists(command: string): boolean {
+  if (!/^[A-Za-z0-9._-]+$/.test(command)) return false;
   try {
-    execSync(`which ${command}`, { encoding: 'utf-8', timeout: 3000, stdio: 'pipe' });
+    execFileSync('which', [command], { encoding: 'utf-8', timeout: 3000, stdio: 'pipe' });
     return true;
   } catch {
     return false;

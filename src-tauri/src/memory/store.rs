@@ -3,6 +3,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// Context string marking entries added by the vocabulary learner's auto-accept —
+/// only these are ever evicted. User-curated entries (any other context) are kept.
+pub const AUTO_LEARNED_CONTEXT: &str = "Auto-learned correction";
+const MAX_AUTO_LEARNED_ENTRIES: usize = 300;
+
 fn memory_path() -> PathBuf {
     let dir = dirs::home_dir().unwrap_or_default()
         .join("Library/Application Support/echo");
@@ -37,10 +42,47 @@ impl MemoryStore {
     fn load_from_disk() -> Vec<MemoryEntry> {
         let path = memory_path();
         if !path.exists() { return vec![]; }
-        fs::read_to_string(&path)
+        let mut entries: Vec<MemoryEntry> = fs::read_to_string(&path)
             .ok()
             .and_then(|data| serde_json::from_str(&data).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        Self::prune_auto_learned(&mut entries);
+        entries
+    }
+
+    /// Cap auto-learned entries so the vocabulary learner cannot grow the store
+    /// without bound. Evicts the lowest-`use_count` / oldest-`updated_at` entries
+    /// beyond the cap. User-curated vocabulary (any other context) is never evicted.
+    /// Returns true if anything was removed.
+    fn prune_auto_learned(entries: &mut Vec<MemoryEntry>) -> bool {
+        let auto_count = entries.iter().filter(|e| e.context == AUTO_LEARNED_CONTEXT).count();
+        if auto_count <= MAX_AUTO_LEARNED_ENTRIES {
+            return false;
+        }
+
+        // Rank auto-learned entries: lowest use_count first, then oldest updated_at.
+        let mut auto: Vec<&MemoryEntry> = entries
+            .iter()
+            .filter(|e| e.context == AUTO_LEARNED_CONTEXT)
+            .collect();
+        auto.sort_by(|a, b| {
+            a.use_count
+                .cmp(&b.use_count)
+                .then_with(|| a.updated_at.cmp(&b.updated_at))
+        });
+        let evict_count = auto_count - MAX_AUTO_LEARNED_ENTRIES;
+        let evict_ids: std::collections::HashSet<String> = auto
+            .iter()
+            .take(evict_count)
+            .map(|e| e.id.clone())
+            .collect();
+        entries.retain(|e| !evict_ids.contains(&e.id));
+        log::info!(
+            "[memory] Evicted {} auto-learned entries (cap {})",
+            evict_count,
+            MAX_AUTO_LEARNED_ENTRIES
+        );
+        true
     }
 
     fn save(&self) {
@@ -64,7 +106,11 @@ impl MemoryStore {
             created_at: now.clone(),
             updated_at: now,
         };
-        self.entries.lock().unwrap().push(entry.clone());
+        {
+            let mut entries = self.entries.lock().unwrap();
+            entries.push(entry.clone());
+            Self::prune_auto_learned(&mut entries);
+        }
         self.save();
         entry
     }

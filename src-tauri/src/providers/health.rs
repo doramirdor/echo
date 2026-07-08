@@ -48,6 +48,13 @@ pub async fn check_all_providers(settings: &SettingsStore) -> Vec<ProviderStatus
     }
 
     let cli_exists = |cmd: &str| -> bool {
+        // Reject anything that isn't a bare tool name so a value sourced from
+        // settings can never reach a shell (mirrors the /^[A-Za-z0-9._-]+$/
+        // guard in providerHealth.ts). `which` is spawned directly (no shell),
+        // but the guard keeps parity and defends against odd arguments.
+        if cmd.is_empty() || !cmd.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')) {
+            return false;
+        }
         std::process::Command::new("which").arg(cmd).output().map(|o| o.status.success()).unwrap_or(false)
     };
 

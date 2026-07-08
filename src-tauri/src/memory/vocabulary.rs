@@ -5,9 +5,12 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use super::store::MemoryStore;
+use super::store::{MemoryStore, AUTO_LEARNED_CONTEXT};
 
 const AUTO_ACCEPT_THRESHOLD: u32 = 3;
+const MAX_SUGGESTIONS: usize = 500;
+/// Below this length a 2-char difference is most of the word, so fuzzy matching is noise.
+const MIN_FUZZY_WORD_LENGTH: usize = 4;
 
 /// Process-wide tally of `"misrecognition->term"` → count, so a correction must
 /// recur before it's trusted enough to persist.
@@ -37,7 +40,13 @@ pub fn analyze_and_learn(memory: &MemoryStore, raw: &str, refined: &str) {
             if raw_word == rw {
                 continue;
             }
-            if sounds_similar(raw_word, rw) || raw_word.to_lowercase() == rw.to_lowercase() {
+            let is_case_variant = raw_word.to_lowercase() == rw.to_lowercase();
+            // Very short raw words (a, the, to...) produce garbage fuzzy matches;
+            // only pure case corrections are worth keeping for them.
+            if !is_case_variant && raw_word.chars().count() < MIN_FUZZY_WORD_LENGTH {
+                continue;
+            }
+            if is_case_variant || sounds_similar(raw_word, rw) {
                 let key = format!("{}->{}", raw_word.to_lowercase(), rw);
                 let count = {
                     let mut counts = suggestion_counts().lock().unwrap();
@@ -54,6 +63,22 @@ pub fn analyze_and_learn(memory: &MemoryStore, raw: &str, refined: &str) {
             }
         }
     }
+
+    prune_suggestions();
+}
+
+/// Keep the suggestions tally bounded; evict the lowest-count entries first.
+fn prune_suggestions() {
+    let mut counts = suggestion_counts().lock().unwrap();
+    if counts.len() <= MAX_SUGGESTIONS {
+        return;
+    }
+    let mut by_count: Vec<(String, u32)> = counts.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    by_count.sort_by(|a, b| a.1.cmp(&b.1));
+    let excess = counts.len() - MAX_SUGGESTIONS;
+    for (key, _) in by_count.into_iter().take(excess) {
+        counts.remove(&key);
+    }
 }
 
 /// Persist a confident correction into memory, unless the misrecognition is
@@ -69,7 +94,7 @@ fn auto_accept(memory: &MemoryStore, term: &str, misrecognition: &str) {
     }
     memory.add(
         term.to_string(),
-        "Auto-learned correction".to_string(),
+        AUTO_LEARNED_CONTEXT.to_string(),
         vec![misrecognition.to_string()],
         "productName".to_string(),
     );
@@ -81,6 +106,11 @@ fn sounds_similar(a: &str, b: &str) -> bool {
     let bl = b.to_lowercase();
     if al == bl {
         return true;
+    }
+    // Only fuzzy-match words long enough that a 2-char difference is plausibly
+    // the same word.
+    if al.chars().count().min(bl.chars().count()) < MIN_FUZZY_WORD_LENGTH {
+        return false;
     }
     if (al.len() as isize - bl.len() as isize).unsigned_abs() <= 1 {
         let max_len = al.len().max(bl.len());

@@ -1,4 +1,4 @@
-import { MemoryStore } from '../memory/memoryStore';
+import { AUTO_LEARNED_CONTEXT, MemoryStore } from '../memory/memoryStore';
 import { logger } from '../utils/logger';
 
 export interface SuggestedCorrection {
@@ -8,6 +8,9 @@ export interface SuggestedCorrection {
 }
 
 const AUTO_ACCEPT_THRESHOLD = 3;
+const MAX_SUGGESTIONS = 500;
+// Below this length a 2-char difference is most of the word, so fuzzy matching is noise.
+const MIN_FUZZY_WORD_LENGTH = 4;
 
 /**
  * Compare raw transcription to refined output and learn vocabulary corrections.
@@ -40,7 +43,11 @@ export class VocabularyLearner {
       // Find potential misrecognition in raw
       for (const rawWord of rawWords) {
         if (rawWord === refinedWord) continue;
-        if (soundsSimilar(rawWord, refinedWord) || rawWord.toLowerCase() === refinedWord.toLowerCase()) {
+        const isCaseVariant = rawWord.toLowerCase() === refinedWord.toLowerCase();
+        // Very short raw words (a, the, to...) produce garbage fuzzy matches;
+        // only pure case corrections are worth keeping for them.
+        if (!isCaseVariant && rawWord.length < MIN_FUZZY_WORD_LENGTH) continue;
+        if (isCaseVariant || soundsSimilar(rawWord, refinedWord)) {
           const key = `${rawWord.toLowerCase()}->${refinedWord}`;
           const existing = this.suggestions.get(key);
           const entry: SuggestedCorrection = existing
@@ -61,7 +68,19 @@ export class VocabularyLearner {
       logger.info('vocab-learner', `Found ${newSuggestions.length} correction(s)`);
     }
 
+    this.pruneSuggestions();
     return newSuggestions;
+  }
+
+  /** Keep the suggestions map bounded; evict the lowest-count entries first. */
+  private pruneSuggestions(): void {
+    if (this.suggestions.size <= MAX_SUGGESTIONS) return;
+    const byCountAsc = Array.from(this.suggestions.entries())
+      .sort((a, b) => a[1].count - b[1].count);
+    const excess = this.suggestions.size - MAX_SUGGESTIONS;
+    for (let i = 0; i < excess; i++) {
+      this.suggestions.delete(byCountAsc[i][0]);
+    }
   }
 
   getSuggestions(): SuggestedCorrection[] {
@@ -79,7 +98,7 @@ export class VocabularyLearner {
     } else {
       this.memory.add({
         term: suggestion.term,
-        context: `Auto-learned correction`,
+        context: AUTO_LEARNED_CONTEXT,
         misrecognitions: [suggestion.misrecognition],
         category: 'productName',
       });
@@ -107,7 +126,9 @@ function soundsSimilar(a: string, b: string): boolean {
   const al = a.toLowerCase();
   const bl = b.toLowerCase();
   if (al === bl) return true;
-  // Phonetic-ish: same length and differ by <=2 chars
+  // Phonetic-ish: similar length and differ by <=2 chars — but only for words
+  // long enough that a 2-char difference is plausibly the same word.
+  if (Math.min(al.length, bl.length) < MIN_FUZZY_WORD_LENGTH) return false;
   if (Math.abs(al.length - bl.length) <= 1) {
     let diffs = 0;
     const maxLen = Math.max(al.length, bl.length);

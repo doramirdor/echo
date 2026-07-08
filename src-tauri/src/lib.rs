@@ -29,7 +29,7 @@ use std::sync::Arc;
 use tauri::{
     AppHandle, Emitter, Manager,
     tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     image::Image,
     WebviewWindowBuilder, WebviewUrl,
 };
@@ -47,11 +47,125 @@ struct EchoApp {
     live_transcriber: Arc<Mutex<LiveTranscriber>>,
     /// Input Monitoring permission as reported by the fn-monitor helper.
     im_status: Arc<Mutex<String>>,
+    /// Reentrancy guard: a second stop trigger during the (async) stop sequence
+    /// must not start a second pipeline. Mirrors `stopInProgress` in index.ts.
+    stop_in_progress: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Take the first `max` characters of `s` without splitting a UTF-8 codepoint.
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
+}
+
+/// Copy a failed run's recording into a durable recovery folder so the audio is
+/// never silently lost when the speech engine is down. Best-effort; returns the
+/// saved path (or None when there was nothing to save / the copy failed). The
+/// normal successful path still deletes its temp WAVs — only failures land here.
+/// Mirrors `preserveRecording` in pipeline.ts.
+fn preserve_recording(wav_path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let wav = wav_path?;
+    let meta = std::fs::metadata(wav).ok()?;
+    // A header-only WAV (<=44 bytes) captured no audio — nothing worth keeping.
+    if meta.len() <= 44 {
+        return None;
+    }
+    let dir = dirs::home_dir()?.join("Library/Application Support/echo/recordings");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let dest = dir.join(format!("recording-{}.wav", stamp));
+    match std::fs::copy(wav, &dest) {
+        Ok(_) => {
+            log::info!("[pipeline] Saved unrecovered recording to {:?}", dest);
+            Some(dest)
+        }
+        Err(e) => {
+            log::warn!("[pipeline] Failed to preserve recording: {}", e);
+            None
+        }
+    }
+}
+
+/// macOS Screen Recording (TCC) authorization. `CGPreflightScreenCaptureAccess`
+/// returns true only when access is already granted; it can't distinguish denied
+/// from not-determined, so a false reads as "unknown" (the settings UI then
+/// offers an "Open" shortcut, matching Electron's fallback). Only relevant when
+/// the "Capture screenshots" context option is enabled.
+#[cfg(target_os = "macos")]
+fn screen_recording_status() -> (bool, &'static str) {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    if unsafe { CGPreflightScreenCaptureAccess() } {
+        (true, "granted")
+    } else {
+        (false, "unknown")
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn screen_recording_status() -> (bool, &'static str) {
+    (false, "unknown")
+}
+
+/// Microphone (TCC) authorization via `AVCaptureDevice authorizationStatusForMediaType:`.
+/// 0 not-determined, 1 restricted, 2 denied, 3 authorized. Mirrors Electron's
+/// `systemPreferences.getMediaAccessStatus('microphone')`.
+#[cfg(target_os = "macos")]
+fn microphone_status() -> (bool, &'static str) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    extern "C" {
+        // AVMediaTypeAudio is an NSString* constant exported by AVFoundation.
+        static AVMediaTypeAudio: *const AnyObject;
+    }
+
+    let status: isize = unsafe {
+        let cls = class!(AVCaptureDevice);
+        let media: *const AnyObject = AVMediaTypeAudio;
+        msg_send![cls, authorizationStatusForMediaType: media]
+    };
+    match status {
+        3 => (true, "granted"),
+        2 => (false, "denied"),
+        1 => (false, "restricted"),
+        0 => (false, "not-determined"),
+        _ => (false, "unknown"),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn microphone_status() -> (bool, &'static str) {
+    (false, "unknown")
+}
+
+/// Trigger the native microphone permission prompt (only meaningful when status
+/// is not-determined). Mirrors Electron's `askForMediaAccess('microphone')`.
+#[cfg(target_os = "macos")]
+fn request_microphone_access() {
+    use block2::RcBlock;
+    use objc2::runtime::{AnyObject, Bool};
+    use objc2::{class, msg_send};
+
+    extern "C" {
+        static AVMediaTypeAudio: *const AnyObject;
+    }
+
+    // Heap block (RcBlock): the completion handler fires asynchronously after the
+    // prompt is answered, so a stack block would be freed too early. We ignore the
+    // result — the settings/onboarding UI polls get_status.
+    let handler = RcBlock::new(|_granted: Bool| {});
+    unsafe {
+        let cls = class!(AVCaptureDevice);
+        let media: *const AnyObject = AVMediaTypeAudio;
+        let _: () = msg_send![cls, requestAccessForMediaType: media, completionHandler: &*handler];
+    }
 }
 
 // ── IPC Commands ──────────────────────────────────────────────────────────────
@@ -62,7 +176,14 @@ async fn get_settings(state: tauri::State<'_, EchoApp>) -> Result<serde_json::Va
 }
 
 #[tauri::command]
-async fn set_setting(app: AppHandle, state: tauri::State<'_, EchoApp>, key: String, value: serde_json::Value) -> Result<(), String> {
+async fn set_setting(app: AppHandle, state: tauri::State<'_, EchoApp>, key: String, value: serde_json::Value) -> Result<serde_json::Value, String> {
+    // Hotkey changes take effect immediately: re-register the accelerator and
+    // report failure to the renderer so the UI never claims a dead hotkey
+    // (mirrors `applyHotkeySetting` in ipc.ts).
+    if key == "hotkey" || key == "overlayHotkey" || key == "undoHotkey" {
+        return Ok(apply_hotkey_setting(&app, state.inner(), &key, value.as_str().unwrap_or("")));
+    }
+
     state.settings.set_value(&key, value.clone());
 
     // Keep the OS login item in sync when the toggle changes.
@@ -75,7 +196,82 @@ async fn set_setting(app: AppHandle, state: tauri::State<'_, EchoApp>, key: Stri
             let _ = mgr.disable();
         }
     }
-    Ok(())
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+/// (Re)register one of the three global hotkeys under its current callback.
+/// Accelerator strings from settings use `CommandOrControl`; the plugin wants
+/// `CmdOrCtrl` (same mapping used at startup).
+fn register_hotkey(app: &AppHandle, key: &str, accel: &str) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let gs = app.global_shortcut();
+    match key {
+        "hotkey" => {
+            let app_handle = app.clone();
+            gs.on_shortcut(accel, move |_a, _s, event| {
+                let pressed = event.state == ShortcutState::Pressed;
+                let app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<EchoApp>();
+                    if pressed {
+                        handle_hotkey_pressed(&app, &state).await;
+                    } else {
+                        handle_hotkey_released(&app, &state).await;
+                    }
+                });
+            }).map_err(|e| e.to_string())
+        }
+        "overlayHotkey" => {
+            let app_handle = app.clone();
+            gs.on_shortcut(accel, move |_a, _s, event| {
+                if event.state == ShortcutState::Pressed {
+                    toggle_overlay_window(&app_handle);
+                }
+            }).map_err(|e| e.to_string())
+        }
+        _ => {
+            let app_handle = app.clone();
+            gs.on_shortcut(accel, move |_a, _s, event| {
+                if event.state == ShortcutState::Pressed {
+                    let app = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        undo_last_insertion_impl(&app.state::<EchoApp>()).await;
+                    });
+                }
+            }).map_err(|e| e.to_string())
+        }
+    }
+}
+
+/// Swap a hotkey live: unregister the old accelerator, register the new one, and
+/// persist only on success. On failure the old accelerator is restored and an
+/// error is returned so the settings UI can revert the field.
+fn apply_hotkey_setting(app: &AppHandle, echo: &EchoApp, key: &str, accel: &str) -> serde_json::Value {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    let old = echo.settings.get(|s| match key {
+        "hotkey" => s.hotkey.clone(),
+        "overlayHotkey" => s.overlay_hotkey.clone(),
+        _ => s.undo_hotkey.clone(),
+    });
+    if accel == old {
+        return serde_json::json!({ "ok": true });
+    }
+
+    let old_str = old.replace("CommandOrControl", "CmdOrCtrl");
+    let new_str = accel.replace("CommandOrControl", "CmdOrCtrl");
+    let _ = app.global_shortcut().unregister(old_str.as_str());
+
+    match register_hotkey(app, key, &new_str) {
+        Ok(()) => {
+            echo.settings.set_value(key, serde_json::Value::String(accel.to_string()));
+            serde_json::json!({ "ok": true })
+        }
+        Err(e) => {
+            // New accelerator is malformed or already in use — put the old one back.
+            let _ = register_hotkey(app, key, &old_str);
+            serde_json::json!({ "ok": false, "error": e })
+        }
+    }
 }
 
 #[tauri::command]
@@ -107,15 +303,22 @@ async fn get_status(state: tauri::State<'_, EchoApp>) -> Result<serde_json::Valu
     let im = state.im_status.lock().await.clone();
     let im_ok = im == "granted";
 
+    let (screen_ok, screen_status) = screen_recording_status();
+    let (mic_ok, mic_status) = microphone_status();
+
     Ok(serde_json::json!({
         "state": current_state.to_string(),
         "whisper": { "binary": whisper_bin, "model": whisper_model },
         "sox": { "ok": sox_ok, "message": sox_msg },
         "accessibility": { "ok": ax_ok, "message": ax_msg },
-        // Microphone TCC status isn't queried natively yet — report "unknown" so
-        // the settings UI shows an "Open" shortcut rather than a misleading state.
-        "microphone": { "ok": false, "status": "unknown" },
+        "microphone": { "ok": mic_ok, "status": mic_status },
         "inputMonitoring": { "ok": im_ok, "status": im },
+        // Screen Recording is queryable via TCC; Speech Recognition and Automation
+        // (Apple Events) have no supported query API, so they report "unknown" and
+        // the UI offers an "Open" shortcut to the right pane.
+        "screenRecording": { "ok": screen_ok, "status": screen_status },
+        "speechRecognition": { "ok": false, "status": "unknown" },
+        "automation": { "ok": false, "status": "unknown" },
     }))
 }
 
@@ -137,6 +340,9 @@ async fn discard_recording(app: &AppHandle, echo: &EchoApp) {
     if echo.app_state.is_recording().await {
         echo.recorder.lock().await.force_stop();
         echo.live_transcriber.lock().await.force_stop();
+        echo.app_state.inner.lock().await.live_injected_text.clear();
+        // Live chunks may have replaced the user's clipboard mid-recording.
+        insertion::text_inserter::restore_user_clipboard().await;
         echo.app_state.set_state(EchoState::Idle, None).await;
         let _ = app.emit("state-change", ("idle", serde_json::json!({})));
     }
@@ -161,8 +367,13 @@ async fn reinsert_text(state: tauri::State<'_, EchoApp>, text: String) -> Result
 }
 
 #[tauri::command]
-async fn scan_project(project_path: String, project_name: String) -> Result<serde_json::Value, String> {
-    match codebase::analyzer::analyze(&project_path, &project_name, |_| {}).await {
+async fn scan_project(app: AppHandle, project_path: String, project_name: String) -> Result<serde_json::Value, String> {
+    // Onboarding and Settings both host the scan UI; a global emit reaches both
+    // (mirrors the two-window stream in ipc.ts).
+    let app2 = app.clone();
+    match codebase::analyzer::analyze(&project_path, &project_name, move |streamed| {
+        let _ = app2.emit("scan-stream", streamed);
+    }).await {
         Ok(ctx) => Ok(serde_json::json!({ "success": true, "length": ctx.len() })),
         Err(e) => Ok(serde_json::json!({ "success": false, "error": e })),
     }
@@ -191,8 +402,41 @@ fn open_input_monitoring_settings() -> Result<(), String> {
 
 #[tauri::command]
 fn open_microphone_settings() -> Result<(), String> {
+    // If access was never requested, trigger the native prompt; otherwise
+    // (denied/restricted) jump to the Microphone pane (mirrors ipc.ts).
+    #[cfg(target_os = "macos")]
+    {
+        if microphone_status().1 == "not-determined" {
+            request_microphone_access();
+            return Ok(());
+        }
+    }
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+        .spawn();
+    Ok(())
+}
+
+#[tauri::command]
+fn open_screen_recording_settings() -> Result<(), String> {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        .spawn();
+    Ok(())
+}
+
+#[tauri::command]
+fn open_speech_recognition_settings() -> Result<(), String> {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")
+        .spawn();
+    Ok(())
+}
+
+#[tauri::command]
+fn open_automation_settings() -> Result<(), String> {
+    let _ = std::process::Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
         .spawn();
     Ok(())
 }
@@ -253,6 +497,13 @@ fn list_whisper_models() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 fn check_cli_exists(command: String) -> Result<bool, String> {
+    // The name crosses the IPC boundary — only accept bare tool names
+    // (mirrors the check in src/main/ipc.ts).
+    if command.is_empty()
+        || !command.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Ok(false);
+    }
     Ok(std::process::Command::new("which").arg(&command).output().map(|o| o.status.success()).unwrap_or(false))
 }
 
@@ -582,6 +833,16 @@ async fn handle_fn_action(
                 _ => {}
             }
         }
+        FnAction::Combo => {
+            // fn was used as a modifier for another key (e.g. fn+Delete, fn+←)
+            // rather than pressed on its own — discard the optimistic recording
+            // it triggered. The eventual Release is a no-op once mode is Idle.
+            g.stray_gen += 1;
+            if state == EchoState::Recording && g.mode == FnSessionMode::Pending {
+                g.mode = FnSessionMode::Idle;
+                discard_recording(app, echo).await;
+            }
+        }
     }
 }
 
@@ -637,6 +898,15 @@ async fn start_recording(app: &AppHandle, echo: &EchoApp) {
             let msg = utils::errors::to_user_facing_error(&e);
             echo.app_state.set_state(EchoState::Error, Some(msg.clone())).await;
             let _ = app.emit("state-change", ("error", serde_json::json!({ "error": msg })));
+            // Same auto-recovery as the pipeline error path — otherwise the overlay
+            // and tray stay pinned on the error until the next manual trigger.
+            let state = echo.app_state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                if state.get_state().await == EchoState::Error {
+                    state.set_state(EchoState::Idle, None).await;
+                }
+            });
             return;
         }
         recorder.level_receiver()
@@ -662,14 +932,26 @@ async fn start_recording(app: &AppHandle, echo: &EchoApp) {
                         if trimmed.is_empty() { continue; }
                         let _ = app_handle.emit("live-transcript", trimmed.clone());
                         if echo.app_state.is_recording().await {
-                            let sep = {
+                            // First chunk continues the caret context — the same
+                            // join the pipeline applies to the final replacement;
+                            // later chunks join with a space.
+                            let adjusted = {
                                 let inner = echo.app_state.inner.lock().await;
-                                if inner.live_injected_text.is_empty() { "" } else { " " }
+                                if !inner.live_injected_text.is_empty() {
+                                    format!(" {}", trimmed)
+                                } else if let Some(before) = inner.existing_field_text.clone() {
+                                    insertion::continuation::join_continuation(&before, &trimmed)
+                                } else {
+                                    trimmed.clone()
+                                }
                             };
-                            let chunk = format!("{}{}", sep, trimmed);
-                            let _ = insertion::text_inserter::insert_live(&chunk).await;
-                            echo.app_state.inner.lock().await.live_injected_text.push_str(&chunk);
-                            log::info!("[echo] Live injected: \"{}\"", trimmed);
+                            // Only count text that actually landed — a phantom
+                            // count would make the final replace delete the user's
+                            // own text.
+                            if insertion::text_inserter::insert_live(&adjusted, None).await {
+                                echo.app_state.inner.lock().await.live_injected_text.push_str(&adjusted);
+                                log::info!("[echo] Live injected: \"{}\"", trimmed);
+                            }
                         }
                     }
                 }
@@ -763,8 +1045,22 @@ fn spawn_level_task(app: &AppHandle, echo: &EchoApp, mut level_rx: tokio::sync::
 }
 
 async fn stop_recording(app: &AppHandle, echo: &EchoApp) {
+    use std::sync::atomic::Ordering;
+    // A second stop trigger during the async stop sequence must not start a
+    // second pipeline (mirrors `stopInProgress` in index.ts).
+    if echo.stop_in_progress.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
     audio::sounds::play_recording_stop();
     echo.live_transcriber.lock().await.force_stop();
+
+    // Leave Recording synchronously so a second stop trigger sees a non-recording
+    // state and can't re-enter here while the pipeline spins up.
+    if echo.app_state.is_recording().await {
+        echo.app_state.set_state(EchoState::Transcribing, None).await;
+        let _ = app.emit("state-change", ("transcribing", serde_json::json!({})));
+    }
 
     let app_handle = app.clone();
     let settings = echo.settings.clone();
@@ -774,10 +1070,12 @@ async fn stop_recording(app: &AppHandle, echo: &EchoApp) {
     let edit_learner = echo.edit_learner.clone();
     let app_state = echo.app_state.clone();
     let recorder = echo.recorder.clone();
+    let stop_flag = echo.stop_in_progress.clone();
 
     // Run pipeline in background
     tokio::spawn(async move {
         run_pipeline(&app_handle, &settings, &memory, &templates, &run_log, &edit_learner, &app_state, &recorder).await;
+        stop_flag.store(false, Ordering::SeqCst);
     });
 }
 
@@ -803,14 +1101,38 @@ async fn run_pipeline(
         source_app = inner.source_app.clone();
     }
 
+    // Temp WAV paths captured so the outer cleanup can delete them (raw, cleaned,
+    // and the denoised intermediate) whether the pipeline succeeds or fails.
+    let mut raw_wav: Option<std::path::PathBuf> = None;
+    let mut clean_wav: Option<std::path::PathBuf> = None;
+
     let result: Result<(), String> = async {
         app_state.set_state(EchoState::Transcribing, None).await;
         let _ = app.emit("state-change", ("transcribing", serde_json::json!({})));
 
         let wav_path = recorder.lock().await.stop().await?;
-        let noise_reduction = settings.get(|s| s.noise_reduction);
-        let whisper_mode = settings.get(|s| s.whisper_mode);
-        let clean_path = AudioRecorder::post_process(&wav_path, noise_reduction, whisper_mode);
+        raw_wav = Some(wav_path.clone());
+
+        // An empty recording (header-only WAV) means the mic captured nothing —
+        // almost always a missing Microphone grant. Fail with a clear message
+        // rather than sending silence to the STT engine, which mislabels it.
+        let wav_bytes = std::fs::metadata(&wav_path).map(|m| m.len()).unwrap_or(0);
+        if wav_bytes <= 44 {
+            return Err("No audio captured — grant Microphone access to Echo in System Settings > Privacy & Security > Microphone.".into());
+        }
+
+        // The sox passes (noise reduction / gain) only feed the engines that
+        // consume the cleaned file — local whisper and macOS Speech transcribe the
+        // raw WAV, so for them post-processing would be pure wasted latency.
+        let uses_clean_audio = matches!(stt_engine.as_str(), "groq" | "deepgram" | "openai-whisper");
+        let clean_path = if uses_clean_audio {
+            let noise_reduction = settings.get(|s| s.noise_reduction);
+            let whisper_mode = settings.get(|s| s.whisper_mode);
+            AudioRecorder::post_process(&wav_path, noise_reduction, whisper_mode)
+        } else {
+            wav_path.clone()
+        };
+        clean_wav = Some(clean_path.clone());
 
         log::info!("[pipeline] Transcribing with {}...", stt_engine);
 
@@ -854,6 +1176,23 @@ async fn run_pipeline(
             None
         };
 
+        // Cheap window-metadata fallback, used if the heavy vision synthesis above
+        // blows its budget (mirrors `contextFallbackPromise` in index.ts).
+        let context_fallback_handle = if settings.get(|s| s.refinement_enabled)
+            && llm_provider != "none"
+            && settings.get(|s| s.use_window_context)
+            && settings.get(|s| s.context_provider.clone()) != "none"
+        {
+            Some(tokio::spawn(async move {
+                let wctx = tokio::task::spawn_blocking(context::window::capture_window_context)
+                    .await
+                    .unwrap_or_default();
+                context::window::format_window_context(&wctx)
+            }))
+        } else {
+            None
+        };
+
         // Bias recognition toward known vocabulary, learned corrections, and
         // project jargon — fixes terms *during* transcription, before the LLM runs.
         let bias_prompt = transcription::speech_bias::build_speech_bias_prompt(
@@ -863,7 +1202,15 @@ async fn run_pipeline(
             codebase::analyzer::load_context().as_deref(),
         );
 
-        let result = transcription::transcribe_audio(&stt_engine, &clean_path, &wav_path, settings, &bias_prompt).await?;
+        let (result, engine_used) = transcription::transcribe_with_fallback(&stt_engine, &clean_path, &wav_path, settings, &bias_prompt).await?;
+        if engine_used != stt_engine {
+            log::info!("[pipeline] Transcribed via fallback engine: {}", engine_used);
+            use tauri_plugin_notification::NotificationExt;
+            let _ = app.notification().builder()
+                .title("Echo")
+                .body(&format!("{} transcription failed — used local Whisper instead", stt_engine))
+                .show();
+        }
 
         // Surface low-confidence segments (Deepgram/OpenAI) to the overlay.
         let low_conf: Vec<_> = result.segments.iter().filter(|s| s.confidence < 0.7).cloned().collect();
@@ -889,15 +1236,32 @@ async fn run_pipeline(
             source_app.as_deref(),
             &settings.get(|s| s.app_profiles.clone()),
         );
+        // When an LLM refiner will run, scratch/undo phrases are left for it (its
+        // base prompt implements self-correction); the deterministic layer only
+        // takes them when no refiner is configured.
+        let refiner_configured = settings.get(|s| s.refinement_enabled)
+            && settings.get(|s| s.llm_provider.clone()) != "none";
         let voice_result = voice::commands::process_voice_commands(
             &cleaned,
             settings.get(|s| s.voice_commands_enabled),
-            active_profile == "coding" || active_profile == "shell",
+            voice::commands::VoiceCommandOptions {
+                code_symbols: active_profile == "coding" || active_profile == "shell",
+                refiner_available: refiner_configured,
+            },
         );
         cleaned = voice_result.text;
 
         if cleaned.is_empty() {
-            log::info!("[pipeline] Empty transcription, skipping");
+            log::info!("[pipeline] Empty/blank transcription, skipping");
+            if !live_injected_text.is_empty() {
+                // Live preview text is already on screen; keep it, but let the undo
+                // hotkey revert exactly that text.
+                app_state.set_last_insertion(live_injected_text.clone(), source_app.clone()).await;
+            } else if voice_result.commands.is_empty() {
+                use tauri_plugin_notification::NotificationExt;
+                let _ = app.notification().builder().title("Echo").body("No speech detected").show();
+            }
+            run_log.add(raw_text.clone(), String::new(), String::new(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
             app_state.set_state(EchoState::Idle, None).await;
             let _ = app.emit("state-change", ("idle", serde_json::json!({})));
             return Ok(());
@@ -909,13 +1273,10 @@ async fn run_pipeline(
         // What is currently shown in the target app and will be replaced by the
         // refined text. Starts as whatever was injected live during recording.
         let mut injected_text = live_injected_text.clone();
-        // Continuation join only applies when NOT replacing live text — the live
-        // path already handled spacing/capitalization while recording.
-        let continuation_before = if injected_text.is_empty() {
-            app_state.inner.lock().await.existing_field_text.clone().unwrap_or_default()
-        } else {
-            String::new()
-        };
+        // Continuation prefix for joining onto text already in the field. The live
+        // path applies the same join to its first chunk, so this stays valid for
+        // the final replacement in both the live and instant-insert paths.
+        let continuation_before = app_state.inner.lock().await.existing_field_text.clone().unwrap_or_default();
 
         if !voice_result.skip_refinement && settings.get(|s| s.refinement_enabled) && llm_provider != "none" {
             app_state.set_state(EchoState::Refining, None).await;
@@ -930,7 +1291,7 @@ async fn run_pipeline(
                 } else {
                     insertion::continuation::join_continuation(&continuation_before, &cleaned)
                 };
-                if insertion::text_inserter::insert_live(&early).await.is_ok() {
+                if insertion::text_inserter::insert_live(&early, source_app.as_deref()).await {
                     injected_text = early;
                 }
             }
@@ -946,9 +1307,24 @@ async fn run_pipeline(
                 None
             };
 
-            // Await the context captured in parallel with transcription above.
+            // Await the context captured in parallel with transcription above,
+            // but bounded: heavy synthesis (vision) must not stall the pipeline.
+            // Past the budget we proceed without window context rather than hang.
             let mut window_context_str = match context_handle {
-                Some(handle) => handle.await.unwrap_or_default(),
+                Some(handle) => {
+                    let budget = if settings.get(|s| s.context_provider.clone()) != "none" { 4000 } else { 1500 };
+                    match tokio::time::timeout(std::time::Duration::from_millis(budget), handle).await {
+                        Ok(joined) => joined.unwrap_or_default(),
+                        Err(_) => {
+                            log::warn!("[pipeline] Context synthesis exceeded {}ms, using window metadata", budget);
+                            match context_fallback_handle {
+                                Some(fb) => tokio::time::timeout(std::time::Duration::from_millis(250), fb)
+                                    .await.ok().and_then(|r| r.ok()).unwrap_or_default(),
+                                None => String::new(),
+                            }
+                        }
+                    }
+                }
                 None => String::new(),
             };
 
@@ -1062,29 +1438,39 @@ async fn run_pipeline(
         // next dictation can detect how the user edited it.
         let inserted_final: String;
         if !injected_text.is_empty() {
-            // Replace the text already on screen (live or instant-insert) with the
-            // refined version. Skip the round trip if it would be a no-op.
+            // Text is already on screen (live or instant-insert): replace only the
+            // suffix that actually differs (code-point prefix diff). Select-back is
+            // one key event per character, so a shorter selection is much faster.
             let final_text = if continuation_before.is_empty() {
                 refined_text.clone()
             } else {
                 insertion::continuation::join_continuation(&continuation_before, &refined_text)
             };
-            if final_text != injected_text {
-                let live_chars = injected_text.chars().count();
-                log::info!("[pipeline] Inserting (replace {} chars): \"{}\"", live_chars, final_text);
-                insertion::text_inserter::replace_live_text(&final_text, live_chars, source_app.as_deref()).await?;
-            } else {
+            let injected_cp: Vec<char> = injected_text.chars().collect();
+            let final_cp: Vec<char> = final_text.chars().collect();
+            let mut prefix = 0;
+            while prefix < injected_cp.len() && prefix < final_cp.len() && injected_cp[prefix] == final_cp[prefix] {
+                prefix += 1;
+            }
+            let select_count = injected_cp.len() - prefix;
+            let suffix: String = final_cp[prefix..].iter().collect();
+            if select_count == 0 && suffix.is_empty() {
                 log::info!("[pipeline] Refined text matches what is already inserted — leaving as-is");
+            } else if select_count == 0 {
+                log::info!("[pipeline] Appending: \"{}\"", suffix);
+                insertion::text_inserter::insert_live(&suffix, source_app.as_deref()).await;
+            } else {
+                log::info!("[pipeline] Inserting (replace {} chars): \"{}\"", select_count, final_text);
+                insertion::text_inserter::replace_live_text(&suffix, select_count, source_app.as_deref()).await?;
             }
             inserted_final = final_text;
         } else {
             // Nothing on screen yet (no LLM and no live text): fresh insert,
             // continuing from the caret. Deterministic, works with no LLM.
-            let before = app_state.inner.lock().await.existing_field_text.clone().unwrap_or_default();
-            let text_to_insert = if before.is_empty() {
+            let text_to_insert = if continuation_before.is_empty() {
                 refined_text.clone()
             } else {
-                insertion::continuation::join_continuation(&before, &refined_text)
+                insertion::continuation::join_continuation(&continuation_before, &refined_text)
             };
             log::info!("[pipeline] Inserting: \"{}\"", text_to_insert);
             insertion::text_inserter::insert(&text_to_insert, source_app.as_deref()).await?;
@@ -1116,7 +1502,7 @@ async fn run_pipeline(
         })));
 
         // Log run
-        run_log.add(raw_text, refined_text.clone(), String::new(), stt_engine.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
+        run_log.add(raw_text, refined_text.clone(), String::new(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
 
         // Vocabulary learning
         memory::vocabulary::analyze_and_learn(memory, &cleaned, &refined_text);
@@ -1134,20 +1520,39 @@ async fn run_pipeline(
     }.await;
 
     if let Err(e) = result {
+        // If anything threw before/after the recorder stopped, make sure the mic
+        // isn't left hot — otherwise every future start throws "Already recording".
+        // Idempotent: no-ops when the recorder already stopped normally.
+        recorder.lock().await.force_stop();
+
         let msg = utils::errors::to_user_facing_error(&e);
         log::error!("[pipeline] ERROR: {}", msg);
+
+        // The speech engine (and any fallback) failed — keep the audio so the user
+        // can recover it instead of losing what they said. The temp-WAV cleanup
+        // below still runs; this copies to a durable recovery folder first.
+        let saved_path = preserve_recording(raw_wav.as_deref());
+
         // Nothing reliably landed — don't let undo delete unrelated text.
         app_state.clear_last_insertion().await;
         app_state.set_state(EchoState::Error, Some(msg.clone())).await;
         let _ = app.emit("state-change", ("error", serde_json::json!({ "error": msg })));
 
         use tauri_plugin_notification::NotificationExt;
+        let body = match &saved_path {
+            Some(_) => format!("{} — recording saved", truncate_chars(&msg, 80)),
+            None => truncate_chars(&msg, 100),
+        };
         let _ = app.notification().builder()
             .title("Echo — Error")
-            .body(truncate_chars(&msg, 100))
+            .body(body)
             .show();
 
-        run_log.add(String::new(), String::new(), String::new(), stt_engine, llm_provider, pipeline_start.elapsed().as_millis() as u64, Some(msg));
+        let logged_error = match &saved_path {
+            Some(p) => format!("{} (recording saved to {})", msg, p.to_string_lossy()),
+            None => msg,
+        };
+        run_log.add(String::new(), String::new(), String::new(), stt_engine, llm_provider, pipeline_start.elapsed().as_millis() as u64, Some(logged_error));
 
         let state = app_state.clone();
         tokio::spawn(async move {
@@ -1157,6 +1562,24 @@ async fn run_pipeline(
             }
         });
     }
+
+    // Recordings are transient: delete the temp WAVs (raw, cleaned, and the
+    // denoised intermediate) whether the pipeline succeeded or failed — they leak
+    // disk space and, worse, audio of everything ever dictated.
+    if let Some(raw) = raw_wav.as_ref() {
+        let denoised = std::path::PathBuf::from(raw.to_string_lossy().replace(".wav", "-denoised.wav"));
+        if let Some(clean) = clean_wav.as_ref() {
+            if clean != raw {
+                let _ = std::fs::remove_file(clean);
+            }
+        }
+        let _ = std::fs::remove_file(&denoised);
+        let _ = std::fs::remove_file(raw);
+    }
+
+    // Live/instant injection may have replaced the user's clipboard — restore the
+    // pre-dictation clipboard (no-op when nothing was injected).
+    insertion::text_inserter::restore_user_clipboard().await;
 }
 
 // ── Window helpers ────────────────────────────────────────────────────────────
@@ -1168,7 +1591,12 @@ fn show_settings(app: &AppHandle) {
     }
     let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("index.html".into()))
         .title("Echo Settings")
-        .inner_size(720.0, 800.0)
+        .inner_size(828.0, 800.0)
+        // Match the Electron settings window's `titleBarStyle: 'hiddenInset'`:
+        // traffic lights overlaid on the content, no title bar, dragged via the
+        // `.sidebar-brand` region (which carries `data-tauri-drag-region`).
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
         .build();
 }
 
@@ -1184,10 +1612,94 @@ fn show_onboarding(app: &AppHandle) {
         .build();
 }
 
+/// Bottom-center of the primary monitor's *work area* (mirrors the Electron
+/// overlay, which anchors to `display.workArea`). Using the work area — not the
+/// full `mon.size()` — means we exclude the menu bar and Dock, so the window's
+/// bottom edge lands exactly at the top of the Dock. The pill itself sits
+/// `bottom: 12px` inside the window, clearing the Dock cleanly on any machine
+/// regardless of Dock height or auto-hide. Without an explicit position Tauri
+/// centers the window in the middle of the screen.
+fn overlay_position(app: &AppHandle, w: f64, h: f64) -> (f64, f64) {
+    if let Ok(Some(mon)) = app.primary_monitor() {
+        let scale = mon.scale_factor();
+        let area = mon.work_area();
+        let size = area.size.to_logical::<f64>(scale);
+        let pos = area.position.to_logical::<f64>(scale);
+        let x = pos.x + (size.width - w) / 2.0;
+        let y = pos.y + size.height - h;
+        (x, y)
+    } else {
+        (200.0, 200.0)
+    }
+}
+
+// Idle: a small pill (just the fn handle / hover-expanded "Dictate" label), so
+// the always-present island only blocks a tiny bottom-center area. Active
+// (recording / processing / error): the full size that fits the live transcript
+// bubble above the pill and multi-line error text.
+const OVERLAY_IDLE_W: f64 = 210.0;
+const OVERLAY_IDLE_H: f64 = 60.0;
+const OVERLAY_ACTIVE_W: f64 = 340.0;
+const OVERLAY_ACTIVE_H: f64 = 160.0;
+
+/// Clamp a logical (x, y) so a `w`×`h` window stays within the monitor it
+/// currently sits on (falls back to the primary monitor). Keeps the overlay
+/// from growing partly off-screen when it expands near an edge.
+fn clamp_overlay(win: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> (f64, f64) {
+    let mon = win
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| win.primary_monitor().ok().flatten());
+    if let Some(mon) = mon {
+        let scale = mon.scale_factor();
+        let area = mon.work_area();
+        let size = area.size.to_logical::<f64>(scale);
+        let pos = area.position.to_logical::<f64>(scale);
+        let max_x = (pos.x + size.width - w).max(pos.x);
+        let max_y = (pos.y + size.height - h).max(pos.y);
+        return (x.clamp(pos.x, max_x), y.clamp(pos.y, max_y));
+    }
+    (x, y)
+}
+
+/// Resize the overlay while keeping the pill where it is. We anchor the window's
+/// bottom-center point: the pill grows upward/outward around a fixed spot rather
+/// than snapping to the screen's bottom-center on every state change — so a
+/// position the user dragged to survives idle↔recording transitions. On launch
+/// the window is still at the `overlay_position` default, so an untouched pill
+/// behaves exactly as before.
+fn set_overlay_bounds(app: &AppHandle, w: f64, h: f64) {
+    if let Some(win) = app.get_webview_window("overlay") {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let anchor = win
+            .outer_position()
+            .ok()
+            .zip(win.inner_size().ok())
+            .map(|(p, s)| {
+                let cx = p.x as f64 / scale + (s.width as f64 / scale) / 2.0;
+                let by = p.y as f64 / scale + s.height as f64 / scale;
+                (cx, by) // (center-x, bottom-y)
+            });
+        let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+        let (x, y) = match anchor {
+            Some((cx, by)) => clamp_overlay(&win, cx - w / 2.0, by - h, w, h),
+            None => overlay_position(app, w, h),
+        };
+        let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
+    }
+}
+
 fn create_overlay(app: &AppHandle) {
+    // Keep the overlay visible as a small idle pill (Wispr-style always-present
+    // island) unless the user opted into auto-hide — otherwise there's nothing
+    // to hover, and the hover-to-reveal "Dictate" affordance never appears.
+    let auto_hide = app.state::<EchoApp>().settings.get(|s| s.auto_hide_overlay);
+    let (ox, oy) = overlay_position(app, OVERLAY_IDLE_W, OVERLAY_IDLE_H);
     let _ = WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
         .title("")
-        .inner_size(340.0, 160.0)
+        .inner_size(OVERLAY_IDLE_W, OVERLAY_IDLE_H)
+        .position(ox, oy)
         .decorations(false)
         .transparent(true)
         .always_on_top(true)
@@ -1195,9 +1707,7 @@ fn create_overlay(app: &AppHandle) {
         .resizable(false)
         .skip_taskbar(true)
         .focused(false)
-        // Start hidden — the state watcher shows it when recording begins and
-        // hides it again shortly after returning to idle.
-        .visible(false)
+        .visible(!auto_hide)
         .visible_on_all_workspaces(true)
         .build();
 }
@@ -1209,6 +1719,235 @@ fn toggle_overlay_window(app: &AppHandle) {
         } else {
             let _ = win.show();
         }
+    }
+}
+
+// ── Tray menu ─────────────────────────────────────────────────────────────────
+// The context menu is rebuilt on demand so its state label, start/stop text, and
+// radio/checkbox marks are always fresh (mirrors the on-demand `buildTrayMenu`
+// in tray.ts). The audio-device list is cached and refreshed off-thread so
+// enumerating it (slow `system_profiler`) never blocks a state transition.
+
+static TRAY_DEVICES: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
+fn warm_tray_devices() {
+    // Plain thread, not tokio::spawn_blocking — this is also called from the
+    // synchronous `setup()` where no Tokio runtime is entered yet.
+    std::thread::spawn(|| {
+        let devices = AudioRecorder::list_input_devices();
+        if let Ok(mut d) = TRAY_DEVICES.lock() {
+            *d = devices;
+        }
+    });
+}
+
+fn format_hotkey(hotkey: &str) -> String {
+    hotkey
+        .replace("CommandOrControl", "\u{2318}")
+        .replace("Shift", "\u{21E7}")
+        .replace('+', "")
+}
+
+fn build_tray_menu(
+    app: &AppHandle,
+    state: EchoState,
+    error_msg: Option<String>,
+    last_refined: Option<String>,
+    is_recording: bool,
+    is_busy: bool,
+    settings: &SettingsStore,
+    devices: &[String],
+) -> tauri::Result<Menu<tauri::Wry>> {
+    let hotkey = format_hotkey(&settings.get(|s| s.hotkey.clone()));
+
+    let state_label = match state {
+        EchoState::Recording => "\u{1F534} Recording... (press hotkey to stop)".to_string(),
+        EchoState::Idle => format!("Ready \u{2014} {} to record", hotkey),
+        EchoState::Error => format!("\u{274C} {}", error_msg.unwrap_or_default()),
+        _ => "\u{23F3} Processing...".to_string(),
+    };
+    let state_item = MenuItem::with_id(app, "state", state_label, false, None::<&str>)?;
+    let sep1 = PredefinedMenuItem::separator(app)?;
+
+    let toggle_label = if is_recording {
+        format!("Stop Recording ({})", hotkey)
+    } else {
+        format!("Start Recording ({})", hotkey)
+    };
+    let toggle_item = MenuItem::with_id(app, "toggle", toggle_label, !is_busy || is_recording, None::<&str>)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+
+    let overlay_visible = app
+        .get_webview_window("overlay")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+    let overlay_item = MenuItem::with_id(
+        app,
+        "overlay",
+        if overlay_visible { "Hide Overlay" } else { "Show Overlay" },
+        true,
+        None::<&str>,
+    )?;
+    let autohide_item = CheckMenuItem::with_id(
+        app,
+        "autohide",
+        "Auto-hide Overlay",
+        true,
+        settings.get(|s| s.auto_hide_overlay),
+        None::<&str>,
+    )?;
+    let sep3 = PredefinedMenuItem::separator(app)?;
+
+    // Microphone submenu (variable-length device list).
+    let current_device = settings.get(|s| s.audio_device.clone());
+    let default_dev = CheckMenuItem::with_id(app, "dev::", "System Default", true, current_device.is_empty(), None::<&str>)?;
+    let mut device_items: Vec<CheckMenuItem<tauri::Wry>> = Vec::new();
+    for d in devices {
+        device_items.push(CheckMenuItem::with_id(app, format!("dev::{}", d), d, true, &current_device == d, None::<&str>)?);
+    }
+    let mut mic_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&default_dev];
+    for item in &device_items {
+        mic_refs.push(item);
+    }
+    let mic_submenu = Submenu::with_items(app, "Microphone", true, &mic_refs)?;
+
+    // STT engine submenu (fixed list).
+    let stt = settings.get(|s| s.stt_engine.clone());
+    let stt_defs = [
+        ("groq", "Groq Cloud (Whisper Large V3)"),
+        ("whisper", "Local Whisper.cpp"),
+        ("macos", "macOS Native"),
+        ("deepgram", "Deepgram"),
+        ("openai-whisper", "OpenAI Whisper API"),
+    ];
+    let mut stt_items: Vec<CheckMenuItem<tauri::Wry>> = Vec::new();
+    for (id, label) in stt_defs {
+        stt_items.push(CheckMenuItem::with_id(app, format!("stt::{}", id), label, true, stt == id, None::<&str>)?);
+    }
+    let stt_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = stt_items.iter().map(|i| i as &dyn IsMenuItem<tauri::Wry>).collect();
+    let stt_submenu = Submenu::with_items(app, "STT Engine", true, &stt_refs)?;
+    let sep4 = PredefinedMenuItem::separator(app)?;
+
+    let grammar_item = CheckMenuItem::with_id(app, "grammar", "Fix Grammar", true, settings.get(|s| s.grammar_check), None::<&str>)?;
+
+    // Tone submenu.
+    let tone = settings.get(|s| s.tone.clone());
+    let tone_defs = [("casual", "Casual"), ("formal", "Formal")];
+    let mut tone_items: Vec<CheckMenuItem<tauri::Wry>> = Vec::new();
+    for (id, label) in tone_defs {
+        tone_items.push(CheckMenuItem::with_id(app, format!("tone::{}", id), label, true, tone == id, None::<&str>)?);
+    }
+    let tone_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = tone_items.iter().map(|i| i as &dyn IsMenuItem<tauri::Wry>).collect();
+    let tone_submenu = Submenu::with_items(app, "Tone", true, &tone_refs)?;
+    let sep5 = PredefinedMenuItem::separator(app)?;
+
+    let settings_item = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
+    let sep6 = PredefinedMenuItem::separator(app)?;
+
+    let last_text = last_refined
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| truncate_chars(s, 50))
+        .unwrap_or_else(|| "nothing yet".to_string());
+    let last_item = MenuItem::with_id(app, "last", format!("Last: {}", last_text), false, None::<&str>)?;
+    let sep7 = PredefinedMenuItem::separator(app)?;
+
+    let quit_item = MenuItem::with_id(app, "quit", "Quit Echo", true, None::<&str>)?;
+
+    Menu::with_items(app, &[
+        &state_item, &sep1,
+        &toggle_item, &sep2,
+        &overlay_item, &autohide_item, &sep3,
+        &mic_submenu, &stt_submenu, &sep4,
+        &grammar_item, &tone_submenu, &sep5,
+        &settings_item, &sep6,
+        &last_item, &sep7,
+        &quit_item,
+    ])
+}
+
+/// Rebuild the tray context menu from current state + settings and swap it in.
+async fn rebuild_tray_menu(app: &AppHandle) {
+    let echo = app.state::<EchoApp>();
+    let state = echo.app_state.get_state().await;
+    let (error_msg, last_refined) = {
+        let inner = echo.app_state.inner.lock().await;
+        (inner.error_message.clone(), inner.last_refined_text.clone())
+    };
+    let is_recording = state == EchoState::Recording;
+    let is_busy = !matches!(state, EchoState::Idle | EchoState::Error);
+    let devices = TRAY_DEVICES.lock().map(|d| d.clone()).unwrap_or_default();
+    warm_tray_devices(); // refresh the cache for next time
+
+    if let Ok(menu) = build_tray_menu(app, state, error_msg, last_refined, is_recording, is_busy, &echo.settings, &devices) {
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_menu(Some(menu));
+        }
+    }
+}
+
+/// Handle a tray menu selection. Setting toggles persist and trigger a rebuild so
+/// the checkmarks update.
+fn handle_tray_menu_event(app: &AppHandle, id: &str) {
+    let echo = app.state::<EchoApp>();
+    let mut changed_setting = true;
+    match id {
+        "quit" => { app.exit(0); return; }
+        "settings" => { show_settings(app); return; }
+        "toggle" => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app.state::<EchoApp>();
+                handle_toggle(&app, &state).await;
+            });
+            return;
+        }
+        "overlay" => { toggle_overlay_window(app); }
+        "autohide" => {
+            let v = !echo.settings.get(|s| s.auto_hide_overlay);
+            echo.settings.set_value("autoHideOverlay", serde_json::Value::Bool(v));
+        }
+        "grammar" => {
+            let v = !echo.settings.get(|s| s.grammar_check);
+            echo.settings.set_value("grammarCheck", serde_json::Value::Bool(v));
+        }
+        "state" | "last" => { changed_setting = false; }
+        other => {
+            if let Some(name) = other.strip_prefix("dev::") {
+                echo.settings.set_value("audioDevice", serde_json::Value::String(name.to_string()));
+            } else if let Some(engine) = other.strip_prefix("stt::") {
+                echo.settings.set_value("sttEngine", serde_json::Value::String(engine.to_string()));
+            } else if let Some(t) = other.strip_prefix("tone::") {
+                echo.settings.set_value("tone", serde_json::Value::String(t.to_string()));
+            } else {
+                changed_setting = false;
+            }
+        }
+    }
+    if changed_setting {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { rebuild_tray_menu(&app).await; });
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod permission_ffi_tests {
+    // Exercise the ObjC/AVFoundation FFI at runtime — a wrong selector or return
+    // type would compile but crash/return garbage here.
+    #[test]
+    fn microphone_status_returns_valid_variant() {
+        let (_ok, status) = super::microphone_status();
+        assert!(
+            matches!(status, "granted" | "denied" | "restricted" | "not-determined" | "unknown"),
+            "unexpected mic status: {status}"
+        );
+    }
+
+    #[test]
+    fn screen_recording_status_returns_valid_variant() {
+        let (_ok, status) = super::screen_recording_status();
+        assert!(matches!(status, "granted" | "unknown"), "unexpected screen status: {status}");
     }
 }
 
@@ -1229,19 +1968,39 @@ pub fn run() {
         recorder: Arc::new(Mutex::new(AudioRecorder::new())),
         live_transcriber: Arc::new(Mutex::new(LiveTranscriber::new())),
         im_status: Arc::new(Mutex::new("unknown".to_string())),
+        stop_in_progress: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
-    // Seed bundled prebuilts (native helpers, whisper-cli, model) into the app
-    // support dir on first run of a packaged build — so the recipient's Mac needs
-    // no Xcode tools / Homebrew / git / cmake / network. No-op in dev.
+    // Seed bundled prebuilts (native helpers, whisper-cli) into the app support
+    // dir on first run of a packaged build — so the recipient's Mac needs no
+    // Xcode tools / Homebrew / git / cmake. No-op in dev.
     utils::provision::provision_bundled_assets();
 
-    // Pre-compile Swift binaries (best-effort; recompiled on demand if stale).
-    utils::swift_binary::ensure_swift_binary("fn-monitor", "scripts/fn-monitor.swift");
-    utils::swift_binary::ensure_swift_binary("live-transcribe", "scripts/live-transcribe.swift");
-    utils::swift_binary::ensure_swift_binary("transcribe", "scripts/transcribe.swift");
-    utils::swift_binary::ensure_swift_binary("field-context", "scripts/field-context.swift");
-    utils::swift_binary::ensure_swift_binary("record", "scripts/record.swift");
+    // In a packaged build the main app has a stable code identity (it's built and
+    // signed once, never re-signed on the user's Mac), so the "disclaim
+    // responsibility" trick the Swift helpers use is unnecessary — and worse, it
+    // makes TCC key Input Monitoring / Accessibility on the *helper's* identity,
+    // surfacing confusing separate `fn-monitor` / `text-insert` rows instead of a
+    // single "Echo". Signal the helpers (which inherit our env) to skip disclaim
+    // so every grant binds to Echo. Dev keeps disclaiming (parent cdhash churns).
+    if utils::provision::is_packaged() {
+        std::env::set_var("ECHO_NO_DISCLAIM", "1");
+    }
+
+    // Pre-compile Swift binaries off the main thread (best-effort; recompiled on
+    // demand via the synchronous ensure_swift_binary if still stale). Deduped by
+    // name so a stale-triggered recompile never races the startup compile.
+    for (name, src) in [
+        ("fn-monitor", "scripts/fn-monitor.swift"),
+        ("live-transcribe", "scripts/live-transcribe.swift"),
+        ("transcribe", "scripts/transcribe.swift"),
+        ("field-context", "scripts/field-context.swift"),
+        ("record", "scripts/record.swift"),
+        ("text-insert", "scripts/text-insert.swift"),
+    ] {
+        // Fire-and-forget: drop the JoinHandle so startup isn't blocked.
+        let _ = utils::swift_binary::ensure_swift_binary_async(name, src);
+    }
 
     let show_onboarding_on_start: bool = !echo.settings.get(|s| s.onboarding_complete);
 
@@ -1266,6 +2025,8 @@ pub fn run() {
             reinsert_text, resize_overlay, get_stats,
             scan_project, open_accessibility_settings,
             open_input_monitoring_settings, open_microphone_settings,
+            open_screen_recording_settings, open_speech_recognition_settings,
+            open_automation_settings,
             complete_onboarding,
             download_whisper_model, build_whisper_binary,
             check_whisper_binary, list_whisper_models,
@@ -1283,13 +2044,23 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // Create tray
-            let quit = MenuItem::with_id(app, "quit", "Quit Echo", true, None::<&str>)?;
-            let settings_item = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
-            let toggle_item = MenuItem::with_id(app, "toggle", "Start Recording", true, None::<&str>)?;
-            let sep = PredefinedMenuItem::separator(app)?;
+            // Establish the microphone grant for THIS app up front so the native
+            // recorder (a child process) inherits it. Without an app-level grant
+            // the recorder captures 0 bytes and the child can't raise the prompt
+            // on its own.
+            #[cfg(target_os = "macos")]
+            if microphone_status().1 == "not-determined" {
+                request_microphone_access();
+            }
 
-            let menu = Menu::with_items(app, &[&toggle_item, &sep, &settings_item, &sep, &quit])?;
+            // Build the initial (idle) context menu; it's rebuilt on demand with
+            // fresh state/settings on every state change and after each menu action.
+            warm_tray_devices();
+            let tray_handle = app.handle().clone();
+            let menu = {
+                let echo = app.state::<EchoApp>();
+                build_tray_menu(&tray_handle, EchoState::Idle, None, None, false, false, &echo.settings, &[])?
+            };
 
             let icon_path = app.path().resolve("icons/tray-icon.png", tauri::path::BaseDirectory::Resource)
                 .unwrap_or_else(|_| std::path::PathBuf::from("icons/tray-icon.png"));
@@ -1317,18 +2088,7 @@ pub fn run() {
                     }
                 })
                 .on_menu_event(move |app, event| {
-                    match event.id().as_ref() {
-                        "quit" => { app.exit(0); }
-                        "settings" => { show_settings(app); }
-                        "toggle" => {
-                            let app = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let state = app.state::<EchoApp>();
-                                handle_toggle(&app, &state).await;
-                            });
-                        }
-                        _ => {}
-                    }
+                    handle_tray_menu_event(app, event.id().as_ref());
                 })
                 .build(app)?;
 
@@ -1338,8 +2098,12 @@ pub fn run() {
             // ── fn-key monitor (primary trigger): instant start, classify on release ──
             {
                 let (tx, mut rx) = mpsc::unbounded_channel::<FnAction>();
+                // The monitor sends the last Input Monitoring status here once
+                // when it exhausts its restart budget (mirrors the TS 'dead'
+                // event), so the primary hotkey dying is surfaced, not silent.
+                let (dead_tx, mut dead_rx) = mpsc::unbounded_channel::<String>();
                 let im_status = app.state::<EchoApp>().im_status.clone();
-                fn_monitor::start(tx, im_status);
+                fn_monitor::start(tx, dead_tx, im_status);
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     // Stray-tap discard timers report back here with their generation.
@@ -1362,11 +2126,39 @@ pub fn run() {
                                 let echo = app_handle.state::<EchoApp>();
                                 handle_fn_stray_resolve(&app_handle, &echo, gen, &mut gesture).await;
                             }
+                            Some(input_monitoring) = dead_rx.recv() => {
+                                // The monitor exhausted its restart budget — the
+                                // primary hotkey is gone until it recovers, so say
+                                // so instead of failing silently.
+                                let hotkey = app_handle.state::<EchoApp>().settings.get(|s| s.hotkey.clone());
+                                let body = if input_monitoring == "denied" {
+                                    "fn hotkey stopped — grant Input Monitoring in System Settings > Privacy & Security, then restart Echo.".to_string()
+                                } else {
+                                    format!("fn hotkey stopped working — use {} or restart Echo.", hotkey)
+                                };
+                                use tauri_plugin_notification::NotificationExt;
+                                let _ = app_handle.notification().builder().title("Echo").body(&body).show();
+                            }
                         }
                     }
                 });
                 log::info!("[echo] fn key monitor started");
             }
+
+            // ── Register the text-insert helper for Accessibility ──
+            // Insertion posts keystrokes via CGEvent from the disclaimed
+            // `text-insert` helper (its own stable TCC identity), so it needs its
+            // own Accessibility grant. Ensure the binary exists, then prompt once
+            // so it appears in System Settings → Accessibility for the user to
+            // enable. Off-thread so a cold compile doesn't block startup.
+            std::thread::spawn(|| {
+                utils::swift_binary::ensure_swift_binary("text-insert", "scripts/text-insert.swift");
+                if insertion::text_inserter::ensure_accessibility() {
+                    log::info!("[echo] text-insert Accessibility already granted");
+                } else {
+                    log::warn!("[echo] text-insert needs Accessibility — prompted; enable it in System Settings");
+                }
+            });
 
             // ── Fallback global hotkeys ──
             use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -1423,51 +2215,65 @@ pub fn run() {
                 log::info!("[echo] Undo hotkey registered: {}", undo_hotkey_str);
             }
 
-            // ── State watcher: drive tray label + overlay visibility from state ──
+            // ── State watcher: drive tray menu + overlay visibility from state ──
             {
                 let app_handle = app.handle().clone();
                 let mut rx = app.state::<EchoApp>().app_state.state_rx.clone();
-                let toggle_item = toggle_item.clone();
                 tauri::async_runtime::spawn(async move {
                     while rx.changed().await.is_ok() {
                         let (state, _err) = rx.borrow().clone();
 
                         if let Some(tray) = app_handle.tray_by_id("main") {
-                            if state == EchoState::Recording {
-                                let _ = tray.set_tooltip(Some("Echo — Recording…"));
-                                let _ = toggle_item.set_text("Stop Recording");
+                            let tooltip = if state == EchoState::Recording {
+                                "Echo — Recording…"
                             } else {
-                                let _ = tray.set_tooltip(Some("Echo — Voice to Text"));
-                                let _ = toggle_item.set_text("Start Recording");
-                            }
+                                "Echo — Voice to Text"
+                            };
+                            let _ = tray.set_tooltip(Some(tooltip));
                         }
+                        // Rebuild the whole context menu so its state label,
+                        // start/stop text, and checkmarks stay fresh.
+                        rebuild_tray_menu(&app_handle).await;
 
                         if let Some(win) = app_handle.get_webview_window("overlay") {
                             match state {
                                 EchoState::Idle => {
-                                    // Linger briefly to show the result, then hide if still idle.
+                                    // Linger briefly at active size to show the result, then
+                                    // shrink back to the idle pill (or hide, if auto-hide is on).
                                     let w = win.clone();
                                     let ah = app_handle.clone();
                                     tauri::async_runtime::spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                                         if ah.state::<EchoApp>().app_state.get_state().await == EchoState::Idle {
-                                            let _ = w.hide();
+                                            if ah.state::<EchoApp>().settings.get(|s| s.auto_hide_overlay) {
+                                                let _ = w.hide();
+                                            } else {
+                                                set_overlay_bounds(&ah, OVERLAY_IDLE_W, OVERLAY_IDLE_H);
+                                            }
                                         }
                                     });
                                 }
                                 EchoState::Error => {
                                     audio::sounds::play_error();
+                                    set_overlay_bounds(&app_handle, OVERLAY_ACTIVE_W, OVERLAY_ACTIVE_H);
                                     let _ = win.show();
                                     let w = win.clone();
                                     let ah = app_handle.clone();
                                     tauri::async_runtime::spawn(async move {
                                         tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
                                         if ah.state::<EchoApp>().app_state.get_state().await == EchoState::Idle {
-                                            let _ = w.hide();
+                                            if ah.state::<EchoApp>().settings.get(|s| s.auto_hide_overlay) {
+                                                let _ = w.hide();
+                                            } else {
+                                                set_overlay_bounds(&ah, OVERLAY_IDLE_W, OVERLAY_IDLE_H);
+                                            }
                                         }
                                     });
                                 }
                                 _ => {
+                                    // Recording / transcribing / refining / inserting: grow to
+                                    // fit the waveform + live-transcript bubble, then show.
+                                    set_overlay_bounds(&app_handle, OVERLAY_ACTIVE_W, OVERLAY_ACTIVE_H);
                                     let _ = win.show();
                                 }
                             }
@@ -1503,6 +2309,12 @@ pub fn run() {
             log::info!("[echo] Ready!");
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Kill the warm whisper-server child on quit so it doesn't linger.
+            if let tauri::RunEvent::Exit = event {
+                transcription::whisper::shutdown();
+            }
+        });
 }

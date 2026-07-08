@@ -55,7 +55,12 @@ impl AudioRecorder {
         let mut cmd = Command::new(&bin);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
-        cmd.stdin(Stdio::null());
+        // Pipe stdin and hold it open below. record.swift treats stdin EOF as a
+        // stop signal (readLine() -> nil), so a null/closed stdin makes it exit(0)
+        // *before* capturing anything. The Electron side spawns with a piped stdin
+        // it keeps open (src/main/audio/recorder.ts); mirror that here. We stop via
+        // SIGTERM, not by closing stdin.
+        cmd.stdin(Stdio::piped());
 
         if let Some(dev) = device_name {
             cmd.arg(dev); // advisory — capture follows the system default input
@@ -75,6 +80,23 @@ impl AudioRecorder {
         }
 
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+        // Take (but never drop) the helper's stdin — it's moved into the collection
+        // task below so the pipe stays open for the whole recording. Dropping it
+        // here would close the pipe (EOF) and make record.swift stop immediately.
+        let stdin_keepalive = child.stdin.take();
+
+        // Drain + log the helper's stderr. Previously it was piped but never read,
+        // so record.swift's diagnostics (e.g. "microphone access denied", "no audio
+        // input available") were invisible — and a full stderr pipe could stall it.
+        if let Some(stderr) = child.stderr.take() {
+            tauri::async_runtime::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    log::info!("[record.swift] {}", line);
+                }
+            });
+        }
 
         let raw_data = self.raw_data.clone();
         let level_tx = self.level_tx.clone();
@@ -87,6 +109,10 @@ impl AudioRecorder {
         }
 
         let handle = tauri::async_runtime::spawn(async move {
+            // Own the helper's stdin for this task's lifetime; it's dropped (closing
+            // the pipe) only after we've already SIGTERM'd, so it never triggers an
+            // early stop.
+            let _stdin_keepalive = stdin_keepalive;
             let mut stdout = stdout;
             let mut buf = [0u8; 4096];
 
@@ -176,7 +202,12 @@ impl AudioRecorder {
         let mut file = std::fs::File::create(&self.output_path)
             .map_err(|e| format!("Failed to create WAV: {}", e))?;
         file.write_all(&header).map_err(|e| format!("Failed to write header: {}", e))?;
-        file.write_all(&raw_data).map_err(|e| format!("Failed to write data: {}", e))?;
+        // A failed PCM flush still leaves a header + whatever data landed, i.e. a
+        // usable file for the caller — log and continue rather than discarding it.
+        if let Err(e) = file.write_all(&raw_data) {
+            log::warn!("[recorder] Failed to flush all PCM to WAV, keeping partial file: {}", e);
+        }
+        let _ = file.flush();
 
         Ok(())
     }
@@ -186,11 +217,24 @@ impl AudioRecorder {
             handle.abort();
         }
         let pid = self.pid.clone();
+        let raw_data = self.raw_data.clone();
         tauri::async_runtime::spawn(async move {
             if let Some(pid) = *pid.lock().await {
                 unsafe { libc::kill(pid as i32, libc::SIGKILL); }
             }
+            // Drop the buffered PCM — a cancelled recording has no consumer.
+            raw_data.lock().await.clear();
         });
+        // A cancelled recording's partial WAV has no consumer — best-effort delete.
+        if !self.output_path.as_os_str().is_empty() {
+            match std::fs::remove_file(&self.output_path) {
+                Ok(_) => log::info!("[recorder] Discarded cancelled recording {:?}", self.output_path),
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    log::warn!("[recorder] Failed to delete cancelled WAV: {}", e);
+                }
+                Err(_) => {}
+            }
+        }
         self.is_recording = false;
     }
 

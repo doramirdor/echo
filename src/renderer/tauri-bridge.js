@@ -2,8 +2,14 @@
 // This file is loaded before settings.js and provides the same interface.
 
 (function() {
+  // Under Electron this file is still loaded but the preload bridge provides
+  // window.echo — bail out instead of throwing on every window.
+  if (!window.__TAURI__) return;
   const { invoke } = window.__TAURI__.core;
   const { listen } = window.__TAURI__.event;
+
+  // Logical (CSS-px) position of the overlay window captured at drag start.
+  let dragStartLogical = null;
 
   window.echo = {
     // Settings
@@ -94,6 +100,9 @@
     openAccessibilitySettings: () => invoke('open_accessibility_settings'),
     openInputMonitoringSettings: () => invoke('open_input_monitoring_settings'),
     openMicrophoneSettings: () => invoke('open_microphone_settings'),
+    openScreenRecordingSettings: () => invoke('open_screen_recording_settings'),
+    openSpeechRecognitionSettings: () => invoke('open_speech_recognition_settings'),
+    openAutomationSettings: () => invoke('open_automation_settings'),
     completeOnboarding: () => invoke('complete_onboarding'),
     downloadWhisperModel: (modelName) => invoke('download_whisper_model', { modelName: modelName || null }),
     buildWhisperBinary: () => invoke('build_whisper_binary'),
@@ -118,21 +127,35 @@
       });
     },
 
-    // Overlay click-through (handled differently in Tauri - using window API)
-    overlayMouseEnter: () => {
-      const win = window.__TAURI__.window?.getCurrentWindow?.();
-      if (win) win.setIgnoreCursorEvents(false).catch(() => {});
-    },
-    overlayMouseLeave: () => {
-      const win = window.__TAURI__.window?.getCurrentWindow?.();
-      if (win) win.setIgnoreCursorEvents(true).catch(() => {});
-    },
+    // Overlay hover: the window stays interactive at all times. wry has no
+    // Electron-style `forward` option, so toggling setIgnoreCursorEvents(true)
+    // on mouse-leave makes the window click-through and it can then never
+    // receive the next mouse-enter — hover (and click-to-toggle) die after the
+    // first interaction. The window is kept small when idle so an always-
+    // interactive island only blocks a tiny bottom-center area.
+    overlayMouseEnter: () => {},
+    overlayMouseLeave: () => {},
 
-    // Overlay drag (using Tauri's built-in drag)
+    // Overlay drag: mirror the Electron delta approach (record the window's
+    // position on mousedown, then set an absolute position from screen-space
+    // deltas). Tauri's native startDragging() needs core:window:allow-start-
+    // dragging AND fires reliably only from the synchronous mousedown NSEvent —
+    // the async JS→IPC hop drops it — so instead we move the window ourselves
+    // via set-position, which is already granted in capabilities.
     overlayDragStart: () => {
       const win = window.__TAURI__.window?.getCurrentWindow?.();
-      if (win) win.startDragging().catch(() => {});
+      if (!win) return;
+      dragStartLogical = null;
+      Promise.all([win.outerPosition(), win.scaleFactor()])
+        .then(([pos, scale]) => { dragStartLogical = { x: pos.x / scale, y: pos.y / scale }; })
+        .catch(() => {});
     },
-    overlayDragMove: () => {},
+    overlayDragMove: (deltaX, deltaY) => {
+      const win = window.__TAURI__.window?.getCurrentWindow?.();
+      if (!win || !dragStartLogical) return;
+      // setPosition only inspects `.type`/`.x`/`.y`, so a plain Logical object
+      // avoids depending on where the dpi classes are namespaced in the global.
+      win.setPosition({ type: 'Logical', x: dragStartLogical.x + deltaX, y: dragStartLogical.y + deltaY }).catch(() => {});
+    },
   };
 })();

@@ -18,6 +18,7 @@ export class AppState extends EventEmitter {
   private _sourceApp: string | null = null;
   private _screenshotPath: string | null = null;
   private _contextPromise: Promise<string> | null = null;
+  private _contextFallbackPromise: Promise<string> | null = null;
   private _existingFieldText: string | null = null;
   private _existingFieldTextAfter: string | null = null;
   private _lastInsertedText: string | null = null;
@@ -45,6 +46,15 @@ export class AppState extends EventEmitter {
 
   set contextPromise(promise: Promise<string> | null) {
     this._contextPromise = promise;
+  }
+
+  /** Cheap window-metadata context, used when vision synthesis exceeds its budget. */
+  get contextFallbackPromise(): Promise<string> | null {
+    return this._contextFallbackPromise;
+  }
+
+  set contextFallbackPromise(promise: Promise<string> | null) {
+    this._contextFallbackPromise = promise;
   }
 
   get existingFieldText(): string | null {

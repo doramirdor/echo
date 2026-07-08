@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
   <title>Echo</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -123,28 +124,27 @@
 
     /* === RECORDING STATE: waveform === */
     .container.recording {
-      width: 180px;
-      height: 36px;
+      width: 92px;
+      height: 34px;
       padding: 0 16px;
-      border-radius: 18px;
+      border-radius: 17px;
       background: rgba(30, 30, 30, 0.94);
     }
 
+    /* No dot while recording — the open waveform bar already signals it. */
     .container.recording .idle-bar,
     .container.recording .dictate-label,
     .container.recording .status,
+    .container.recording .dot,
     .container.recording .hide-btn {
       display: none;
-    }
-
-    .container.recording .dot {
-      display: block;
     }
 
     .container.recording .wave-canvas {
       display: block;
     }
 
+    /* Dot is only used to flag the error state now. */
     .dot {
       width: 7px;
       height: 7px;
@@ -156,46 +156,31 @@
       transition: background 0.3s, box-shadow 0.3s;
     }
 
-    .container.recording .dot {
-      background: #FF3B30;
-      box-shadow: 0 0 8px rgba(255,59,48,0.5);
-      animation: pulse-dot 1.5s ease-in-out infinite;
-    }
-
-    .container.processing .dot {
-      display: block;
-      background: #FF9500;
-      animation: pulse-dot 1s ease-in-out infinite;
-    }
-
-    @keyframes pulse-dot {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-
     /* Waveform */
     .wave-canvas {
-      height: 22px;
+      height: 23px;
       flex: 1;
       display: none;
     }
 
-    /* === PROCESSING STATE === */
+    /* === PROCESSING STATE: flowing wave line === */
     .container.processing {
-      width: 130px;
-      height: 32px;
-      padding: 0 14px;
-      border-radius: 16px;
+      width: 92px;
+      height: 34px;
+      padding: 0 16px;
+      border-radius: 17px;
     }
 
     .container.processing .idle-bar,
     .container.processing .dictate-label,
-    .container.processing .wave-canvas,
+    .container.processing .status,
+    .container.processing .dot,
     .container.processing .hide-btn {
       display: none;
     }
 
-    .container.processing .status {
+    /* Same canvas renders the processing wave line. */
+    .container.processing .wave-canvas {
       display: block;
     }
 
@@ -249,15 +234,42 @@
     }
     .container.recording .word-count { display: inline; }
 
-    /* Success flash */
-    .container.success {
-      width: 130px;
-      height: 32px;
-      border-radius: 16px;
-      background: rgba(48, 209, 88, 0.15);
-      border-color: rgba(48, 209, 88, 0.3);
+    /* === ERROR STATE: red-tinted, message wraps up to ~160 chars === */
+    .container.error {
+      width: 300px;
+      height: auto;
+      min-height: 36px;
+      padding: 9px 14px;
+      border-radius: 14px;
+      background: rgba(58, 24, 22, 0.94);
+      border-color: rgba(255, 69, 58, 0.35);
+      align-items: flex-start;
     }
-    .container.success .status { display: block; color: #30D158; }
+
+    .container.error .idle-bar,
+    .container.error .dictate-label,
+    .container.error .wave-canvas,
+    .container.error .word-count,
+    .container.error .hide-btn {
+      display: none;
+    }
+
+    .container.error .dot {
+      display: block;
+      background: #FF453A;
+      box-shadow: 0 0 8px rgba(255,69,58,0.5);
+      margin-top: 4px;
+    }
+
+    .container.error .status {
+      display: block;
+      color: #FFB4AE;
+      white-space: normal;
+      word-wrap: break-word;
+      line-height: 1.45;
+      flex: 1;
+      min-width: 0;
+    }
 
     /* Hide button (only on hover in processing state) */
     .hide-btn {
@@ -323,7 +335,8 @@
     });
 
     var isRecording = false;
-    var NUM_BARS = 28;
+    var waveMode = null; // 'recording' | 'processing' | null — drives the canvas loop
+    var NUM_BARS = 11;
     var waveData = [];
     for (var i = 0; i < NUM_BARS; i++) waveData.push(0);
     var currentLevel = 0;
@@ -387,7 +400,9 @@
     });
 
     api.onAudioLevel(function(level) {
-      if (isRecording) targetLevel = Math.min(1, level * 2.5);
+      // Perceptual curve, not a flat gain: pow(<1) lifts quiet input so a soft
+      // voice still drives tall bars, while true silence (level ~0) maps to ~0.
+      if (isRecording) targetLevel = Math.min(1, Math.pow(level, 0.55) * 2.8);
     });
 
     api.onLiveTranscript(function(text) {
@@ -418,10 +433,9 @@
       transcriptEl.classList.add('visible');
     });
 
-    function drawWave() {
-      currentLevel += (targetLevel - currentLevel) * 0.3;
-      waveTime += 0.12;
-
+    // Single canvas loop. Recording draws audio-driven bars; processing draws
+    // a slow flowing sine line. Runs while waveMode is set.
+    function renderFrame() {
       var dpr = window.devicePixelRatio || 1;
       var w = canvas.clientWidth;
       var h = canvas.clientHeight;
@@ -429,44 +443,86 @@
       canvas.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
-
-      var barW = w / NUM_BARS;
       var cy = h / 2;
+
+      if (waveMode === 'processing') {
+        waveTime += 0.05;
+        drawProcessingWave(w, h, cy);
+      } else {
+        // Ease the level in slowly for a calm, unhurried feel.
+        currentLevel += (targetLevel - currentLevel) * 0.12;
+        waveTime += 0.055;
+        drawRecordingBars(w, h, cy);
+      }
+
+      if (waveMode) animId = requestAnimationFrame(renderFrame);
+      else animId = null;
+    }
+
+    // Clean, coherent bars — one travelling sine + a gentle harmonic, smooth
+    // spring settle, no per-bar jitter. Slow and elegant.
+    function drawRecordingBars(w, h, cy) {
+      var barSlot = w / NUM_BARS;
+      // Halve the gap between bars: keep the 5px base look but fatten each bar
+      // by half the current spacing so the whitespace between them shrinks 2×.
+      var barW = 5 + (barSlot - 5) / 2;
       var level = currentLevel;
 
       for (var i = 0; i < NUM_BARS; i++) {
         var centerDist = 1 - Math.abs(i - NUM_BARS / 2) / (NUM_BARS / 2);
         var envelope = 0.4 + 0.6 * centerDist * centerDist;
 
-        var wave1 = Math.sin(waveTime * 2.3 + i * 0.45) * 0.35;
-        var wave2 = Math.sin(waveTime * 3.7 + i * 0.7) * 0.25;
-        var wave3 = Math.sin(waveTime * 1.1 + i * 1.2) * 0.2;
-        var combined = (wave1 + wave2 + wave3 + 1) * 0.5;
+        var wave1 = Math.sin(waveTime * 1.5 + i * 0.42) * 0.6;
+        var wave2 = Math.sin(waveTime * 0.85 + i * 0.9) * 0.4;
+        var combined = (wave1 + wave2 + 1) * 0.5;
 
-        barTargets[i] = level * envelope * (0.3 + combined * 0.7);
+        var drive = 0.18 + level * 0.85;
+        barTargets[i] = drive * envelope * combined;
 
-        var spring = 0.18 + Math.random() * 0.06;
-        var damping = 0.72;
+        var spring = 0.11;   // softer spring + heavier damping = smooth glide
+        var damping = 0.84;
         barVelocities[i] = barVelocities[i] * damping + (barTargets[i] - waveData[i]) * spring;
         waveData[i] += barVelocities[i];
         waveData[i] = Math.max(0, Math.min(1, waveData[i]));
 
         var v = waveData[i];
-        var barH = Math.max(2, v * (h * 0.85));
-        var x = i * barW;
-        var alpha = 0.25 + v * 0.75;
+        var barH = Math.max(2, v * (h * 0.9));
+        var x = i * barSlot + (barSlot - barW) / 2;
+        var alpha = 0.35 + v * 0.65;
 
-        ctx.fillStyle = 'rgba(100, 140, 255, ' + alpha + ')';
+        ctx.fillStyle = 'rgba(255, 255, 255, ' + alpha + ')';
         ctx.beginPath();
-        ctx.roundRect(x + 0.5, cy - barH / 2, barW - 1, barH, barW / 2);
+        ctx.roundRect(x, cy - barH / 2, barW, barH, barW / 2);
         ctx.fill();
       }
+    }
 
-      if (isRecording) animId = requestAnimationFrame(drawWave);
+    // Indeterminate loading: a single sine line that flows across, tapered at
+    // both ends so it eases into the pill edges.
+    function drawProcessingWave(w, h, cy) {
+      var amp = Math.min(h * 0.3, 7);
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.beginPath();
+      for (var x = 0; x <= w; x += 2) {
+        var t = x / w;
+        var taper = Math.sin(t * Math.PI);           // 0 at edges, 1 in middle
+        var y = cy + Math.sin(t * Math.PI * 3 - waveTime * 2.2) * amp * taper;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    function ensureLoop() {
+      if (!animId) animId = requestAnimationFrame(renderFrame);
     }
 
     function startRecording() {
       isRecording = true;
+      waveMode = 'recording';
       currentLevel = 0;
       targetLevel = 0;
       waveTime = 0;
@@ -474,58 +530,56 @@
       transcriptEl.textContent = '';
       transcriptEl.classList.remove('visible');
       container.className = 'container recording';
-      requestAnimationFrame(function() {
-        requestAnimationFrame(drawWave);
-      });
+      ensureLoop();
     }
 
-    function stopRecording() {
+    function startProcessing() {
       isRecording = false;
+      waveMode = 'processing';
+      transcriptEl.classList.remove('visible');
+      container.className = 'container processing';
+      ensureLoop();
+    }
+
+    function stopWave() {
+      isRecording = false;
+      waveMode = null;
       if (animId) { cancelAnimationFrame(animId); animId = null; }
       transcriptEl.classList.remove('visible');
     }
 
+    // Generation counter: bumped on every state message so delayed resets
+    // from a previous state can't clobber a newer one (e.g. an old error
+    // timeout firing mid-recording).
+    var stateGen = 0;
     api.onStateChange(function(state, data) {
+      stateGen++;
+      var gen = stateGen;
       switch (state) {
         case 'idle':
-          stopRecording();
-          if (data && data.lastResult) {
-            container.className = 'container success';
-            statusEl.textContent = 'Done';
-            setTimeout(function() {
-              container.className = 'container idle';
-              statusEl.textContent = '';
-            }, 1200);
-          } else {
-            container.className = 'container idle';
-            statusEl.textContent = '';
-          }
+          stopWave();
+          container.className = 'container idle';
+          statusEl.textContent = '';
           if (wordCountEl) wordCountEl.textContent = '';
           break;
         case 'recording':
           startRecording();
           break;
         case 'transcribing':
-          stopRecording();
-          container.className = 'container processing';
-          statusEl.textContent = 'Transcribing\u2026';
-          break;
         case 'refining':
-          container.className = 'container processing';
-          statusEl.textContent = 'Refining\u2026';
-          break;
         case 'inserting':
-          container.className = 'container processing';
-          statusEl.textContent = 'Inserting\u2026';
+          startProcessing();
           break;
         case 'error':
-          stopRecording();
-          container.className = 'container processing';
-          statusEl.textContent = data && data.error ? data.error.substring(0, 40) : 'Error';
+          stopWave();
+          container.className = 'container error';
+          var msg = data && data.error ? String(data.error) : 'Something went wrong';
+          statusEl.textContent = msg.length > 160 ? msg.substring(0, 159) + '\u2026' : msg;
           setTimeout(function() {
+            if (gen !== stateGen) return;
             container.className = 'container idle';
             statusEl.textContent = '';
-          }, 3000);
+          }, 5000);
           break;
       }
     });

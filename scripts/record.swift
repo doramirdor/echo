@@ -101,15 +101,21 @@ AVCaptureDevice.requestAccess(for: .audio) { granted in
     }
 }
 
-// Parent signals stop by writing "stop" or by closing stdin (readLine -> nil).
+// Parent signals stop by writing "stop"; SIGTERM (below) is the real backstop.
+// We deliberately do NOT treat stdin EOF as a stop: a parent that spawns us with
+// a null/closed stdin (as the Tauri recorder did) would otherwise make us exit(0)
+// before AVCaptureDevice.requestAccess even resolves — capturing zero frames.
 DispatchQueue.global().async {
     while let line = readLine() {
-        if line == "stop" { break }
+        if line == "stop" {
+            DispatchQueue.main.async {
+                stopCapture()
+                exit(0)
+            }
+            return
+        }
     }
-    DispatchQueue.main.async {
-        stopCapture()
-        exit(0)
-    }
+    // stdin hit EOF without a "stop" line — keep capturing until SIGTERM arrives.
 }
 
 // SIGTERM: stop the engine and exit promptly (streamed data is already flushed).

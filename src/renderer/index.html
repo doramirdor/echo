@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' ipc: http://ipc.localhost; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
   <title>Echo</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -172,6 +172,63 @@
       color: var(--text-secondary);
       margin-bottom: 16px;
       line-height: 1.5;
+    }
+
+    /* Card title with a trailing action (e.g. Edit button) */
+    .card-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    /* Read-only summary shown before you click Edit */
+    .summary {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .summary-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .summary-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .summary-value {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      text-align: right;
+      word-break: break-word;
+    }
+    .summary-value.muted {
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+    .prompt-readout {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--text-secondary);
+      background: var(--bg-input);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .prompt-readout.muted { color: var(--text-muted); font-style: italic; }
+
+    /* Save / Cancel row inside an edit panel */
+    .editable-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
     }
 
     /* Form elements */
@@ -964,7 +1021,7 @@
 <body>
   <!-- Sidebar -->
   <nav class="sidebar">
-    <div class="sidebar-brand">
+    <div class="sidebar-brand" data-tauri-drag-region>
       <svg viewBox="0 0 28 28" fill="none">
         <rect width="28" height="28" rx="8" fill="#6c5ce7"/>
         <rect x="4.5"  y="11"  width="2.8" height="6"  rx="1.4" fill="white"/>
@@ -1000,6 +1057,14 @@
           <path d="M10 14v3M7 17h6"/>
         </svg>
         General
+      </div>
+      <div class="nav-item" data-tab="stt">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/>
+          <path d="M5 9a5 5 0 0010 0"/>
+          <path d="M10 14v3.5M7.5 17.5h5"/>
+        </svg>
+        Speech to Text
       </div>
       <div class="nav-item" data-tab="llm">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1151,7 +1216,10 @@
       <h1 class="page-title">General</h1>
 
       <div class="card">
-        <div class="card-title">Permissions</div>
+        <div class="card-title" style="display:flex; align-items:center; justify-content:space-between; gap:12px">
+          <span>Permissions</span>
+          <button class="btn-secondary" id="perm-refresh" style="font-weight:500">Refresh</button>
+        </div>
         <p class="card-description">Echo needs these macOS permissions to record your voice and type at your cursor. If something is missing, click the button beside it to jump straight to the right pane in System Settings.</p>
         <div class="toggle-row">
           <div class="toggle-label">
@@ -1181,6 +1249,36 @@
           <div class="perm-action">
             <span id="perm-input" class="status">Checking…</span>
             <button class="btn-secondary perm-fix" id="perm-fix-input" style="display:none">Open</button>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Screen Recording</span>
+            <small>Only when “Capture screenshots” context is on</small>
+          </div>
+          <div class="perm-action">
+            <span id="perm-screen" class="status">Checking…</span>
+            <button class="btn-secondary perm-fix" id="perm-fix-screen" style="display:none">Open</button>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Speech Recognition</span>
+            <small>Only when STT engine is set to macOS</small>
+          </div>
+          <div class="perm-action">
+            <span id="perm-speech" class="status">Checking…</span>
+            <button class="btn-secondary perm-fix" id="perm-fix-speech" style="display:none">Open</button>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span>Automation</span>
+            <small>Apple Events: detects the focused app and inserts text</small>
+          </div>
+          <div class="perm-action">
+            <span id="perm-automation" class="status">Checking…</span>
+            <button class="btn-secondary perm-fix" id="perm-fix-automation" style="display:none">Open</button>
           </div>
         </div>
         <p class="card-description" id="perm-hint" style="margin:12px 0 0; display:none">After granting a permission, quit and reopen Echo for it to take effect. Tip: set Keyboard → “Press fn key to” → “Do Nothing”.</p>
@@ -1249,65 +1347,101 @@
         </div>
       </div>
 
-      <div class="card">
-        <div class="card-title">Speech-to-Text Engine</div>
-        <div class="form-group">
-          <label>Engine</label>
-          <select id="sttEngine">
-            <option value="whisper">Whisper — on-device, free (recommended)</option>
-            <option value="macos">macOS Speech Recognition — on-device</option>
-            <option value="groq">Groq — cloud</option>
-            <option value="deepgram">Deepgram — cloud</option>
-            <option value="openai-whisper">OpenAI Whisper — cloud</option>
-          </select>
+    </div>
+
+    <!-- Speech to Text -->
+    <div class="tab-content" id="tab-stt">
+      <h1 class="page-title">Speech to Text</h1>
+
+      <div class="card" id="stt-card">
+        <div class="card-title card-title-row">
+          <span>Engine</span>
+          <button class="btn-secondary" id="stt-edit-btn" style="font-size:12px">Edit</button>
+        </div>
+        <p class="card-description">Step 1 of the pipeline: turns your voice into raw text. The AI that <em>polishes</em> it is a separate choice on the <strong>AI &amp; Refinement</strong> tab.</p>
+
+        <!-- Read view -->
+        <div id="stt-summary" class="summary">
+          <div class="summary-row">
+            <span class="summary-label">Engine</span>
+            <span id="stt-summary-engine" class="summary-value">—</span>
+          </div>
+          <div class="summary-row" id="stt-summary-detail-row">
+            <span class="summary-label" id="stt-summary-detail-label">Detail</span>
+            <span id="stt-summary-detail" class="summary-value muted">—</span>
+          </div>
         </div>
 
-        <div id="whisper-model-section" style="display:none">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-            <label style="margin:0;font-size:13px">Whisper Binary</label>
-            <span id="whisper-binary-badge" class="status">Checking...</span>
-            <button class="btn-secondary" id="build-binary-btn" style="display:none;font-size:11px;padding:4px 10px">Build</button>
-          </div>
-          <div id="build-status" style="font-size:12px;color:var(--text-muted);margin-bottom:10px;display:none"></div>
+        <!-- Edit view -->
+        <div id="stt-edit" style="display:none">
           <div class="form-group">
-            <label>Whisper Model</label>
-            <div class="input-group">
-              <select id="whisperModelName"></select>
-              <button class="btn-primary" id="download-model-btn" style="display:none">Download</button>
+            <label>Engine</label>
+            <select id="sttEngine">
+              <option value="whisper">Whisper — on-device, free (recommended)</option>
+              <option value="macos">macOS Speech Recognition — on-device</option>
+              <option value="groq">Groq — cloud</option>
+              <option value="deepgram">Deepgram — cloud</option>
+              <option value="openai-whisper">OpenAI Whisper — cloud</option>
+            </select>
+          </div>
+
+          <div id="whisper-model-section" data-stt-fields="whisper" style="display:none">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <label style="margin:0;font-size:13px">Whisper Binary</label>
+              <span id="whisper-binary-badge" class="status">Checking...</span>
+              <button class="btn-secondary" id="build-binary-btn" style="display:none;font-size:11px;padding:4px 10px">Build</button>
             </div>
-            <div id="model-download-status" class="validation-status"></div>
+            <div id="build-status" style="font-size:12px;color:var(--text-muted);margin-bottom:10px;display:none"></div>
+            <div class="form-group">
+              <label>Whisper Model</label>
+              <div class="input-group">
+                <select id="whisperModelName"></select>
+                <button class="btn-primary" id="download-model-btn" style="display:none">Download</button>
+              </div>
+              <div id="model-download-status" class="validation-status"></div>
+            </div>
+          </div>
+
+          <p class="card-description" data-stt-fields="macos" style="display:none">Uses macOS's built-in on-device Speech Recognition. Grant the <strong>Speech Recognition</strong> permission on the General tab. No API key needed.</p>
+
+          <div class="form-group" data-stt-fields="groq" style="display:none">
+            <label>Groq API Key</label>
+            <div class="input-group">
+              <input type="password" id="groqApiKey" data-setting="groqApiKey" placeholder="gsk_..." />
+              <button class="btn-secondary" id="validate-groq-btn">Validate</button>
+            </div>
+            <div id="groq-validation-status" class="validation-status"></div>
+          </div>
+
+          <div class="form-group" data-stt-fields="deepgram" style="display:none">
+            <label>Deepgram API Key</label>
+            <div class="input-group">
+              <input type="password" id="deepgramApiKey" placeholder="..." />
+              <button class="btn-secondary" id="validate-deepgram-btn">Validate</button>
+            </div>
+            <div id="deepgram-validation-status" class="validation-status"></div>
+          </div>
+
+          <div class="form-group" data-stt-fields="openai-whisper" style="display:none">
+            <label>OpenAI API Key <span class="hint">Shared with the OpenAI refiner</span></label>
+            <div class="input-group">
+              <input type="password" id="openaiApiKey" data-setting="openaiApiKey" placeholder="sk-..." />
+              <button class="btn-secondary" id="validate-openai-btn">Validate</button>
+            </div>
+            <div id="openai-validation-status" class="validation-status"></div>
+          </div>
+
+          <div class="editable-actions">
+            <button class="btn-primary" id="stt-save-btn">Save</button>
+            <button class="btn-secondary" id="stt-cancel-btn">Cancel</button>
           </div>
         </div>
+      </div>
 
+      <div class="card">
+        <div class="card-title">Transcription</div>
         <div class="form-group">
-          <label>Groq API Key</label>
-          <div class="input-group">
-            <input type="password" id="groqApiKey" placeholder="gsk_..." />
-            <button class="btn-secondary" id="validate-groq-btn">Validate</button>
-          </div>
-          <div id="groq-validation-status" class="validation-status"></div>
-        </div>
-
-        <div class="form-group">
-          <label>Deepgram API Key</label>
-          <div class="input-group">
-            <input type="password" id="deepgramApiKey" placeholder="..." />
-            <button class="btn-secondary" id="validate-deepgram-btn">Validate</button>
-          </div>
-          <div id="deepgram-validation-status" class="validation-status"></div>
-        </div>
-
-        <div class="form-group">
-          <label>OpenAI API Key <span class="hint">For Whisper API + OpenAI refiner</span></label>
-          <div class="input-group">
-            <input type="password" id="openaiApiKey" placeholder="sk-..." />
-            <button class="btn-secondary" id="validate-openai-btn">Validate</button>
-          </div>
-          <div id="openai-validation-status" class="validation-status"></div>
-        </div>
-
-        <div class="form-group">
-          <label>Transcription Language</label>
+          <label>Language</label>
           <select id="transcriptionLanguage">
             <option value="en">English</option>
             <option value="auto">Auto-detect</option>
@@ -1326,107 +1460,144 @@
           </select>
         </div>
       </div>
-
-      <div class="card">
-        <div class="card-title">LLM Provider</div>
-        <div class="form-group">
-          <select id="llmProvider">
-            <option value="claude-cli">Claude CLI (claude -p)</option>
-            <option value="codex-cli">Codex CLI</option>
-            <option value="openai-api">OpenAI API</option>
-            <option value="claude-api">Anthropic API (Claude)</option>
-            <option value="gemini">Google Gemini API</option>
-            <option value="bedrock">AWS Bedrock</option>
-            <option value="ollama">Ollama (local)</option>
-            <option value="groq">Groq API (fast — Llama)</option>
-            <option value="llama-local">Llama.cpp (local)</option>
-            <option value="none">None (raw transcription only)</option>
-          </select>
-        </div>
-      </div>
     </div>
 
     <!-- AI & Refinement -->
     <div class="tab-content" id="tab-llm">
       <h1 class="page-title">AI & Refinement</h1>
 
-      <div class="card">
-        <div class="card-title">CLI Refiners</div>
-        <p class="card-description">Claude CLI and Codex CLI require no API keys — they use your existing CLI auth. Make sure <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">claude</code> or <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">codex</code> is installed and authenticated.</p>
-      </div>
+      <div class="card" id="refiner-card">
+        <div class="card-title card-title-row">
+          <span>Refinement Engine <span class="hint" style="text-transform:none;letter-spacing:0">(LLM Provider)</span></span>
+          <button class="btn-secondary" id="refiner-edit-btn" style="font-size:12px">Edit</button>
+        </div>
+        <p class="card-description">Step 2 of the pipeline: the LLM that cleans up the raw transcript — removes fillers, fixes grammar, applies your prompt. Choose <strong>None</strong> to insert the raw transcript with no AI.</p>
 
-      <div class="card" id="ollama-settings">
-        <div class="card-title">Ollama</div>
-        <div class="form-group">
-          <label>Endpoint</label>
-          <input type="text" id="ollamaEndpoint" />
+        <!-- Read view -->
+        <div id="refiner-summary" class="summary">
+          <div class="summary-row">
+            <span class="summary-label">Engine</span>
+            <span id="refiner-summary-engine" class="summary-value">—</span>
+          </div>
+          <div class="summary-row" id="refiner-summary-detail-row">
+            <span class="summary-label" id="refiner-summary-detail-label">Model</span>
+            <span id="refiner-summary-detail" class="summary-value muted">—</span>
+          </div>
         </div>
-        <div class="form-group">
-          <label>Model</label>
-          <input type="text" id="ollamaModel" />
-        </div>
-      </div>
 
-      <div class="card" id="api-refiner-settings">
-        <div class="card-title">API Refiners</div>
-        <p class="card-description">Claude API key is shared with vision context below. OpenAI API key is in General tab.</p>
-        <div class="form-group">
-          <label>Claude Model</label>
-          <input type="text" id="claudeApiModel" placeholder="claude-sonnet-4-20250514" />
-        </div>
-        <div class="form-group">
-          <label>OpenAI Model</label>
-          <input type="text" id="openaiApiModel" placeholder="gpt-4o-mini" />
-        </div>
-        <div class="form-group">
-          <label>Groq Model</label>
-          <input type="text" id="groqLlmModel" placeholder="llama-3.3-70b-versatile" />
-          <p class="card-description">Reuses the Groq API key from the General tab. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.3-70b-versatile</code> (default) is accurate and still fast. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.1-8b-instant</code> is cheaper but less reliable: it can drop or change words.</p>
-        </div>
-      </div>
+        <!-- Edit view -->
+        <div id="refiner-edit" style="display:none">
+          <div class="form-group">
+            <label>Engine</label>
+            <select id="llmProvider">
+              <option value="claude-cli">Claude CLI (claude -p)</option>
+              <option value="codex-cli">Codex CLI</option>
+              <option value="openai-api">OpenAI API</option>
+              <option value="claude-api">Anthropic API (Claude)</option>
+              <option value="gemini">Google Gemini API</option>
+              <option value="bedrock">AWS Bedrock</option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="groq">Groq API (fast Llama)</option>
+              <option value="llama-local">Llama.cpp (local)</option>
+              <option value="none">None (raw transcription only)</option>
+            </select>
+          </div>
 
-      <div class="card" id="gemini-settings">
-        <div class="card-title">Google Gemini</div>
-        <div class="form-group">
-          <label>Gemini API Key</label>
-          <input type="password" id="geminiApiKey" placeholder="AIza..." />
-        </div>
-        <div class="form-group">
-          <label>Gemini Model</label>
-          <input type="text" id="geminiModel" placeholder="gemini-2.0-flash" />
-        </div>
-      </div>
+          <p class="card-description" data-refiner-fields="claude-cli codex-cli" style="display:none">No API key needed — this uses your existing CLI auth. Make sure <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">claude</code> or <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">codex</code> is installed and authenticated.</p>
 
-      <div class="card" id="bedrock-settings">
-        <div class="card-title">AWS Bedrock</div>
-        <p class="card-description">Static IAM credentials, signed with SigV4. Assumes an Anthropic Claude model on Bedrock.</p>
-        <div class="form-group">
-          <label>Access Key ID</label>
-          <input type="password" id="bedrockAccessKeyId" placeholder="AKIA..." />
-        </div>
-        <div class="form-group">
-          <label>Secret Access Key</label>
-          <input type="password" id="bedrockSecretAccessKey" placeholder="..." />
-        </div>
-        <div class="form-group">
-          <label>Region</label>
-          <input type="text" id="bedrockRegion" placeholder="us-east-1" />
-        </div>
-        <div class="form-group">
-          <label>Model</label>
-          <input type="text" id="bedrockModel" placeholder="anthropic.claude-3-5-haiku-20241022-v1:0" />
-        </div>
-      </div>
+          <p class="card-description" data-refiner-fields="none" style="display:none">Refinement is off. Echo will insert the raw transcript exactly as transcribed.</p>
 
-      <div class="card" id="llama-settings">
-        <div class="card-title">Llama.cpp (Local)</div>
-        <div class="form-group">
-          <label>Endpoint</label>
-          <input type="text" id="llamaEndpoint" placeholder="http://localhost:8080" />
-        </div>
-        <div class="form-group">
-          <label>Model</label>
-          <input type="text" id="llamaModel" placeholder="llama-3.2-3b" />
+          <div data-refiner-fields="ollama" style="display:none">
+            <div class="form-group">
+              <label>Endpoint</label>
+              <input type="text" id="ollamaEndpoint" placeholder="http://localhost:11434" />
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input type="text" id="ollamaModel" placeholder="llama3.2" />
+            </div>
+          </div>
+
+          <div data-refiner-fields="openai-api" style="display:none">
+            <div class="form-group">
+              <label>OpenAI API Key <span class="hint">Shared with OpenAI Whisper STT</span></label>
+              <input type="password" id="openaiApiKeyLlm" data-setting="openaiApiKey" placeholder="sk-..." />
+            </div>
+            <div class="form-group">
+              <label>OpenAI Model</label>
+              <input type="text" id="openaiApiModel" placeholder="gpt-4o-mini" />
+            </div>
+          </div>
+
+          <div data-refiner-fields="claude-api" style="display:none">
+            <div class="form-group">
+              <label>Claude API Key <span class="hint">Shared with vision context</span></label>
+              <input type="password" id="claudeApiKeyLlm" data-setting="claudeApiKey" placeholder="sk-ant-..." />
+            </div>
+            <div class="form-group">
+              <label>Claude Model</label>
+              <input type="text" id="claudeApiModel" placeholder="claude-sonnet-4-20250514" />
+            </div>
+          </div>
+
+          <div data-refiner-fields="groq" style="display:none">
+            <div class="form-group">
+              <label>Groq API Key <span class="hint">Shared with Groq STT</span></label>
+              <input type="password" id="groqApiKeyLlm" data-setting="groqApiKey" placeholder="gsk_..." />
+            </div>
+            <div class="form-group">
+              <label>Groq Model</label>
+              <input type="text" id="groqLlmModel" placeholder="llama-3.3-70b-versatile" />
+              <p class="card-description" style="margin-top:6px;margin-bottom:0"><code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.3-70b-versatile</code> (default) is accurate and still fast. <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:13px">llama-3.1-8b-instant</code> is cheaper but less reliable: it can drop or change words.</p>
+            </div>
+          </div>
+
+          <div data-refiner-fields="gemini" style="display:none">
+            <div class="form-group">
+              <label>Gemini API Key</label>
+              <input type="password" id="geminiApiKey" placeholder="AIza..." />
+            </div>
+            <div class="form-group">
+              <label>Gemini Model</label>
+              <input type="text" id="geminiModel" placeholder="gemini-2.0-flash" />
+            </div>
+          </div>
+
+          <div data-refiner-fields="bedrock" style="display:none">
+            <p class="card-description">Static IAM credentials, signed with SigV4. Assumes an Anthropic Claude model on Bedrock.</p>
+            <div class="form-group">
+              <label>Access Key ID</label>
+              <input type="password" id="bedrockAccessKeyId" placeholder="AKIA..." />
+            </div>
+            <div class="form-group">
+              <label>Secret Access Key</label>
+              <input type="password" id="bedrockSecretAccessKey" placeholder="..." />
+            </div>
+            <div class="form-group">
+              <label>Region</label>
+              <input type="text" id="bedrockRegion" placeholder="us-east-1" />
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input type="text" id="bedrockModel" placeholder="anthropic.claude-3-5-haiku-20241022-v1:0" />
+            </div>
+          </div>
+
+          <div data-refiner-fields="llama-local" style="display:none">
+            <div class="form-group">
+              <label>Endpoint</label>
+              <input type="text" id="llamaEndpoint" placeholder="http://localhost:8080" />
+            </div>
+            <div class="form-group">
+              <label>Model</label>
+              <input type="text" id="llamaModel" placeholder="llama-3.2-3b" />
+            </div>
+          </div>
+
+          <div class="editable-actions">
+            <button class="btn-primary" id="refiner-save-btn">Save</button>
+            <button class="btn-secondary" id="refiner-cancel-btn">Cancel</button>
+          </div>
         </div>
       </div>
 
@@ -1507,14 +1678,37 @@
         <div id="app-profile-list"></div>
       </div>
 
-      <div class="card">
-        <div class="card-title">Refinement Prompt</div>
+      <div class="card" id="prompt-card">
+        <div class="card-title card-title-row">
+          <span>Refinement Prompt <span class="hint" style="text-transform:none;letter-spacing:0">(System Prompt)</span></span>
+          <button class="btn-secondary" id="prompt-edit-btn" style="font-size:12px">Edit</button>
+        </div>
         <div id="prompt-staleness-warning" class="warning-banner" style="display:none">
           The default prompt has been updated since you customized yours. Clear your custom prompt to use the improved default, or keep yours as-is.
         </div>
-        <p class="card-description">Override the default system prompt sent to the LLM. Leave blank to use the built-in prompt.</p>
+        <p class="card-description">The <strong>system prompt</strong> that tells the Refinement Engine how to rewrite your dictation. Anything you enter here <em>replaces</em> Echo's built-in prompt (self-correction, filler removal, dialect preservation); per-app profiles are still appended on top.</p>
+
+        <!-- Read view -->
+        <div id="prompt-readout" class="prompt-readout muted">Using the built-in default prompt.</div>
+
+        <!-- Edit view -->
+        <div id="prompt-edit" style="display:none">
+          <div class="form-group">
+            <textarea id="customPrompt" rows="8" placeholder="Leave blank to use the built-in default prompt..."></textarea>
+          </div>
+          <div class="editable-actions">
+            <button class="btn-primary" id="prompt-save-btn">Save</button>
+            <button class="btn-secondary" id="prompt-cancel-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Conversation Memory</div>
+        <p class="card-description">Feeds your most recent dictations to the Refinement Engine as background context, so it can resolve pronouns like "it" or "that" and keep a consistent train of thought across separate recordings. Pulled from your local run log; only the count below is sent to your chosen provider.</p>
         <div class="form-group">
-          <textarea id="customPrompt" rows="6" placeholder="Leave blank to use default prompt..."></textarea>
+          <label>Recent dictations to remember <span class="hint">0 turns it off, up to 40</span></label>
+          <input type="number" id="dictationHistoryContext" min="0" max="40" step="1" placeholder="2" />
         </div>
       </div>
 
@@ -1539,6 +1733,16 @@
             <span class="toggle-slider"></span>
           </label>
         </div>
+        <div class="toggle-row" style="margin-bottom:14px">
+          <div class="toggle-label">
+            <span>Capture screenshots</span>
+            <small>Send a screenshot of the active window to the vision provider. Off by default for privacy.</small>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="captureScreenshots" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
         <div class="form-group">
           <label>Context Provider</label>
           <select id="contextProvider">
@@ -1549,7 +1753,7 @@
         </div>
         <div class="form-group">
           <label>Claude API Key <span class="hint">Required for Claude vision context</span></label>
-          <input type="password" id="claudeApiKey" placeholder="sk-ant-..." />
+          <input type="password" id="claudeApiKey" data-setting="claudeApiKey" placeholder="sk-ant-..." />
         </div>
       </div>
 
@@ -1626,14 +1830,23 @@
       <h1 class="page-title">History</h1>
 
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <div class="card-title" style="margin-bottom:0">Run Log</div>
           <button class="btn-danger" id="clear-history-btn" style="font-size:12px">Clear All</button>
         </div>
+        <p class="card-description">Your last 100 dictations, newest first. Each row shows what you said (raw) versus what Echo inserted (refined), plus the engines used. Expand "Show changes" to see the edits, or re-insert any result.</p>
         <div class="form-group">
           <input type="text" id="history-search" placeholder="Search history..." />
         </div>
         <div id="history-list"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="card-title" style="margin-bottom:0">Debug Logs</div>
+          <button class="btn-secondary" id="copy-debug-logs-btn" style="font-size:12px">Copy debug logs</button>
+        </div>
+        <p class="card-description" style="margin-bottom:0">Technical diagnostics (pipeline steps, provider errors, timing) written to <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:12px">~/Library/Application Support/echo</code>. Copy these to the clipboard when reporting a bug. <span id="copy-debug-logs-status" style="color:var(--text-muted)"></span></p>
       </div>
     </div>
   </main>

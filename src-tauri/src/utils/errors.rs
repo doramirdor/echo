@@ -7,7 +7,9 @@ pub fn to_user_facing_error(err: &str) -> String {
     if lower.contains("whisper") && (lower.contains("not found") || lower.contains("not ready")) {
         return "Whisper is not set up. Open Settings and build/download Whisper.".into();
     }
-    if lower.contains("groq") && (lower.contains("api") || lower.contains("401") || lower.contains("403")) {
+    // Only a true auth failure means the key is bad — other Groq API errors
+    // (e.g. a 400 from empty/short audio) must not be mislabeled as a key problem.
+    if lower.contains("groq") && (lower.contains("401") || lower.contains("403")) {
         return "Groq API key is invalid or missing. Check Settings.".into();
     }
     if lower.contains("accessibility") || lower.contains("not authorized") {

@@ -35,6 +35,10 @@ pub struct AppStateInner {
     pub existing_field_text: Option<String>,
     pub existing_field_text_after: Option<String>,
     pub context_result: Option<String>,
+    /// Cheap window-metadata context, stashed alongside the heavy synthesized
+    /// `context_result` and used when vision synthesis exceeds its budget.
+    /// Mirrors `_contextFallbackPromise` in src/main/appState.ts.
+    pub context_fallback: Option<String>,
     pub live_injected_text: String,
     pub hotkey_hold_recording: bool,
     /// The exact text most recently inserted at the cursor, and the app it went
@@ -54,6 +58,7 @@ impl Default for AppStateInner {
             existing_field_text: None,
             existing_field_text_after: None,
             context_result: None,
+            context_fallback: None,
             live_injected_text: String::new(),
             hotkey_hold_recording: false,
             last_inserted_text: None,

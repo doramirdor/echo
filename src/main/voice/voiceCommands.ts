@@ -11,6 +11,13 @@ export interface VoiceCommandOptions {
    * gates this on the app profile so prose/email/chat are never affected.
    */
   codeSymbols?: boolean;
+  /**
+   * True when an LLM refiner will run on this transcript. Scratch/undo
+   * phrases are then left in the text untouched — the refiner's base prompt
+   * already implements self-correction and removes the discarded content.
+   * When false (default), scratch/undo is applied deterministically here.
+   */
+  refinerAvailable?: boolean;
 }
 
 // Spoken symbols → literal characters, for dictating code. Risky-in-prose words
@@ -79,22 +86,95 @@ export function applyCodeGrammar(text: string): string {
   return out;
 }
 
-const COMMAND_PATTERNS: Array<{ pattern: RegExp; action: string; replacement?: string }> = [
+// The bare punctuation words double as ordinary English nouns ("the trial
+// period", "comma-separated", "a colon in the URL"). `guarded` entries skip
+// replacement in those noun contexts; two-word explicit forms ("new paragraph",
+// "question mark") are unambiguous and always fire.
+const COMMAND_PATTERNS: Array<{ pattern: RegExp; action: string; replacement?: string; guarded?: boolean }> = [
   { pattern: /\bnew\s+line\b/gi, action: 'newline', replacement: '\n' },
   { pattern: /\bnew\s+paragraph\b/gi, action: 'newparagraph', replacement: '\n\n' },
-  { pattern: /\bperiod\b/gi, action: 'period', replacement: '.' },
-  { pattern: /\bcomma\b/gi, action: 'comma', replacement: ',' },
+  { pattern: /\bperiod\b/gi, action: 'period', replacement: '.', guarded: true },
+  { pattern: /\bcomma\b/gi, action: 'comma', replacement: ',', guarded: true },
   { pattern: /\bquestion\s+mark\b/gi, action: 'questionmark', replacement: '?' },
   { pattern: /\bexclamation\s+(?:mark|point)\b/gi, action: 'exclamation', replacement: '!' },
-  { pattern: /\bcolon\b/gi, action: 'colon', replacement: ':' },
-  { pattern: /\bsemicolon\b/gi, action: 'semicolon', replacement: ';' },
+  { pattern: /\bcolon\b/gi, action: 'colon', replacement: ':', guarded: true },
+  { pattern: /\bsemicolon\b/gi, action: 'semicolon', replacement: ';', guarded: true },
   { pattern: /\bopen\s+(?:parenthesis|paren)\b/gi, action: 'openparen', replacement: '(' },
   { pattern: /\bclose\s+(?:parenthesis|paren)\b/gi, action: 'closeparen', replacement: ')' },
-  { pattern: /\bscratch\s+that\b/gi, action: 'scratch', replacement: '' },
-  { pattern: /\bundo\s+that\b/gi, action: 'undo', replacement: '' },
 ];
 
-const META_COMMANDS = new Set(['scratch', 'undo']);
+// Determiners/possessives and adjective-ish modifiers that precede the NOUN
+// sense of period/comma/colon/semicolon. Not exhaustive — covers the common
+// false-positive shapes; when unsure we prefer NOT replacing (an LLM pass
+// usually fixes punctuation anyway).
+const NOUN_CONTEXT_BEFORE = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'each', 'every', 'any',
+  'some', 'another', 'my', 'your', 'our', 'his', 'her', 'its', 'their', 'whose',
+  'one', 'same', 'whole', 'entire', 'long', 'short', 'brief', 'extended',
+  'trial', 'grace', 'time', 'holding', 'question', 'waiting', 'incubation',
+  'probation', 'probationary', 'notice', 'cooling-off', 'refractory',
+  'gestation', 'quiet', 'rest', 'transition', 'oxford', 'serial', 'inverted',
+]);
+
+// Prepositions/complementizers (plus a few noun-compound tails) that follow
+// the noun sense ("period of time", "colon cancer") but rarely follow a
+// spoken punctuation command.
+const NOUN_CONTEXT_AFTER = new Set([
+  'of', 'in', 'on', 'at', 'by', 'for', 'from', 'to', 'into', 'within',
+  'during', 'when', 'where', 'that', 'which', 'between', 'after', 'before',
+  'over', 'under', 'until', 'since', 'while', 'cancer', 'separated', 'delimited',
+]);
+
+function isPunctuationNounContext(full: string, offset: number, length: number): boolean {
+  // Hyphenated compound: "comma-separated", "semicolon-delimited".
+  if (full[offset - 1] === '-' || full[offset + length] === '-') return true;
+  // Adjacent words only (whitespace between) — a sentence boundary in between
+  // means the neighbor belongs to another clause and is not noun context.
+  const prev = /([a-z'-]+)\s*$/i.exec(full.slice(0, offset));
+  if (prev && NOUN_CONTEXT_BEFORE.has(prev[1].toLowerCase())) return true;
+  const next = /^\s*([a-z'-]+)/i.exec(full.slice(offset + length));
+  if (next && NOUN_CONTEXT_AFTER.has(next[1].toLowerCase())) return true;
+  return false;
+}
+
+const SCRATCH_PHRASE = /\b(scratch|undo)\s+that\b\s*[.!?,]*/i;
+
+/** Index just past the last sentence terminator in `s` (0 if none). */
+function sentenceStart(s: string): number {
+  for (let i = s.length - 1; i >= 0; i--) {
+    const ch = s[i];
+    if (ch === '.' || ch === '!' || ch === '?' || ch === '\n') return i + 1;
+  }
+  return 0;
+}
+
+/**
+ * Deterministic scratch/undo semantics for when no refiner will run:
+ * embedded mid-sentence ("hello scratch that") deletes from the start of that
+ * sentence through the phrase; standing alone as its own sentence
+ * ("Hello. Scratch that.") also deletes the previous sentence. Works on both
+ * punctuated (whisper.cpp) and unpunctuated input.
+ */
+function applyScratchCommands(text: string): { text: string; actions: string[] } {
+  const actions: string[] = [];
+  let out = text;
+  for (let m = SCRATCH_PHRASE.exec(out); m; m = SCRATCH_PHRASE.exec(out)) {
+    const action = m[1].toLowerCase() === 'undo' ? 'undo' : 'scratch';
+    if (!actions.includes(action)) actions.push(action);
+    const before = out.slice(0, m.index);
+    let from = sentenceStart(before);
+    if (before.slice(from).trim() === '') {
+      // The phrase is its own sentence — discard the previous sentence too.
+      from = sentenceStart(before.slice(0, Math.max(0, from - 1)));
+    }
+    const left = out.slice(0, from);
+    const right = out.slice(m.index + m[0].length);
+    out = left && right && !/\s$/.test(left) && !/^\s/.test(right)
+      ? `${left} ${right}`
+      : left + right;
+  }
+  return { text: out, actions };
+}
 
 /**
  * Process voice commands embedded in transcription text.
@@ -110,16 +190,28 @@ export function processVoiceCommands(
   const commands: string[] = [];
   let skipRefinement = false;
 
-  for (const { pattern, action, replacement } of COMMAND_PATTERNS) {
-    if (pattern.test(result)) {
-      commands.push(action);
-      if (META_COMMANDS.has(action)) {
-        skipRefinement = true;
-      }
-      result = result.replace(pattern, replacement ?? '');
-    }
+  for (const { pattern, action, replacement, guarded } of COMMAND_PATTERNS) {
+    let matched = false;
+    result = result.replace(pattern, (match: string, offset: number, full: string) => {
+      if (guarded && isPunctuationNounContext(full, offset, match.length)) return match;
+      matched = true;
+      return replacement ?? '';
+    });
     // Reset lastIndex for global patterns
     pattern.lastIndex = 0;
+    if (matched) commands.push(action);
+  }
+
+  // Scratch/undo: with a refiner available the phrase is left untouched — the
+  // refiner's self-correction prompt removes the discarded content. Without
+  // one, apply deterministic sentence-level deletion here.
+  if (!opts.refinerAvailable) {
+    const scratched = applyScratchCommands(result);
+    if (scratched.actions.length > 0) {
+      result = scratched.text;
+      commands.push(...scratched.actions);
+      skipRefinement = true;
+    }
   }
 
   // Code grammar (symbols + case transforms) — only in code/shell contexts, and

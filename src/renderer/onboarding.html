@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
   <title>Welcome to Echo</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -256,7 +257,7 @@
       <div class="info-card">
         <div class="check-row">
           <span class="check-label">Microphone access</span>
-          <span class="badge badge-ok" id="chk-mic">Will prompt</span>
+          <span class="badge" id="chk-mic">Checking...</span>
         </div>
         <div class="check-row">
           <span class="check-label">Accessibility permission</span>
@@ -273,6 +274,10 @@
       </div>
 
       <div style="font-size:12px; color:var(--text-muted); margin-top:8px;">
+        <span id="mic-hint" style="display:none">
+          <button class="btn-secondary" id="btn-open-mic" style="padding:5px 12px; font-size:12px;">Open System Settings</button>
+          &nbsp; Grant Echo in Privacy &amp; Security &rarr; Microphone.
+        </span>
         <span id="ax-hint" style="display:none">
           <button class="btn-secondary" id="btn-open-ax" style="padding:5px 12px; font-size:12px;">Open System Settings</button>
           &nbsp; Grant Accessibility in Privacy &amp; Security.
@@ -441,6 +446,25 @@
     async function checkPrereqs() {
       var s = await api.getStatus();
 
+      // Microphone — Electron reports the precise TCC status; Tauri may
+      // report "unknown", in which case the first recording will prompt.
+      var micBadge = document.getElementById('chk-mic');
+      var micHint = document.getElementById('mic-hint');
+      var mic = s.microphone || { ok: false, status: 'unknown' };
+      if (mic.ok) {
+        micBadge.textContent = 'Granted';
+        micBadge.className = 'badge badge-ok';
+        micHint.style.display = 'none';
+      } else if (mic.status === 'not-determined' || mic.status === 'unknown') {
+        micBadge.textContent = 'Will prompt';
+        micBadge.className = 'badge badge-ok';
+        micHint.style.display = 'none';
+      } else {
+        micBadge.textContent = 'Not granted';
+        micBadge.className = 'badge badge-error';
+        micHint.style.display = '';
+      }
+
       var axBadge = document.getElementById('chk-ax');
       var axHint = document.getElementById('ax-hint');
       if (s.accessibility.ok) {
@@ -487,6 +511,10 @@
 
     document.getElementById('btn-open-input').addEventListener('click', function() {
       if (api.openInputMonitoringSettings) api.openInputMonitoringSettings();
+    });
+
+    document.getElementById('btn-open-mic').addEventListener('click', function() {
+      if (api.openMicrophoneSettings) api.openMicrophoneSettings();
     });
 
     checkPrereqs();
@@ -706,6 +734,17 @@
     }
 
     // --- Step 3: Project Context ---
+    // Registered once at top level so streamed chunks are never missed; the
+    // element is resolved inside the callback because chunks can arrive at
+    // any point in the wizard.
+    api.onScanStream(function(text) {
+      var output = document.getElementById('scan-output');
+      if (!output) return;
+      output.style.display = '';
+      output.textContent = text;
+      output.scrollTop = output.scrollHeight;
+    });
+
     document.getElementById('btn-browse').addEventListener('click', async function() {
       var folder = await api.browseFolder();
       if (folder) {
@@ -742,11 +781,6 @@
       statusEl.textContent = 'This may take a minute...';
       output.style.display = '';
       output.textContent = 'Starting analysis with Claude...';
-
-      api.onScanStream(function(text) {
-        output.textContent = text;
-        output.scrollTop = output.scrollHeight;
-      });
 
       var result = await api.scanProject(projectPath, projectName);
       if (result.success) {
