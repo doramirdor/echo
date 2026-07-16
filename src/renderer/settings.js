@@ -504,7 +504,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Download progress
-    api.onDownloadProgress(function(percent) {
+    api.onDownloadProgress(function(p) {
+      var percent = (p && typeof p === 'object') ? p.percent : p;
       statusEl.textContent = 'Downloading... ' + percent + '%';
     });
   }
@@ -1340,6 +1341,14 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPerm('perm-input', 'perm-fix-input', { label: 'Not granted', cls: 'status-error', showFix: true, fixLabel: 'Open' });
       }
 
+      // fn (🌐) key — not a TCC permission but the same gate in practice: if
+      // macOS is using fn to change input source, it eats the tap before the
+      // hotkey fires. One click fixes it, so this offers "Free it", not "Open".
+      var fnKey = s.fnKey || { ok: false, status: 'unknown' };
+      renderPerm('perm-fnkey', 'perm-fix-fnkey', fnKey.ok
+        ? { label: 'Free', cls: 'status-ok', showFix: false }
+        : { label: 'Used by macOS', cls: 'status-warn', showFix: true, fixLabel: 'Free it' });
+
       // Situational permissions. Screen Recording carries a real TCC status;
       // Speech Recognition and Automation have no query API, so they read
       // "unknown" and simply offer a shortcut to the relevant pane.
@@ -1377,6 +1386,19 @@ document.addEventListener('DOMContentLoaded', () => {
   if (permFixAx) permFixAx.addEventListener('click', function() { api.openAccessibilitySettings(); });
   var permFixInput = document.getElementById('perm-fix-input');
   if (permFixInput) permFixInput.addEventListener('click', function() { if (api.openInputMonitoringSettings) api.openInputMonitoringSettings(); });
+  var permFixFnKey = document.getElementById('perm-fix-fnkey');
+  if (permFixFnKey) permFixFnKey.addEventListener('click', async function() {
+    if (!api.freeFnKey) return;
+    permFixFnKey.disabled = true;
+    try {
+      var res = await api.freeFnKey();
+      await loadPermissions();
+      // The pref is written, but HIToolbox may only honour it at the next login.
+      var hint = document.getElementById('perm-fnkey-hint');
+      if (hint && res && res.ok) hint.style.display = 'block';
+    } catch (e) { /* ignore */ }
+    permFixFnKey.disabled = false;
+  });
   var permFixScreen = document.getElementById('perm-fix-screen');
   if (permFixScreen) permFixScreen.addEventListener('click', function() { if (api.openScreenRecordingSettings) api.openScreenRecordingSettings(); });
   var permFixSpeech = document.getElementById('perm-fix-speech');

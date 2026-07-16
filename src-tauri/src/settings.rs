@@ -67,6 +67,7 @@ pub struct EchoSettings {
     pub whisper_mode: bool,
     pub crash_reporting_enabled: bool,
     pub auto_update_enabled: bool,
+    pub fn_key_release_offered: bool,
 }
 
 impl Default for EchoSettings {
@@ -124,6 +125,7 @@ impl Default for EchoSettings {
             whisper_mode: false,
             crash_reporting_enabled: false,
             auto_update_enabled: true,
+            fn_key_release_offered: false,
         }
     }
 }

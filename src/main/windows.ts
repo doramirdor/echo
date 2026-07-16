@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, screen } from 'electron';
 import * as path from 'path';
 import { setSetting } from './settings/settings';
 
@@ -40,9 +40,16 @@ export function showOnboarding(): void {
     return;
   }
 
+  // Grow the window ~20% over the old 520×680 so the taller steps (LLM engine
+  // list + API key) fit without scrolling, but never exceed the display's work
+  // area on smaller screens — leave a small margin so it isn't edge-to-edge.
+  const { width: availW, height: availH } = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(624, availW - 40);
+  const height = Math.min(816, availH - 40);
+
   onboardingWindow = new BrowserWindow({
-    width: 520,
-    height: 680,
+    width,
+    height,
     title: 'Welcome to Echo',
     resizable: false,
     webPreferences: {

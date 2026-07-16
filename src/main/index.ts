@@ -1,4 +1,4 @@
-import { app, globalShortcut, Notification, shell } from 'electron';
+import { app, dialog, globalShortcut, Notification, shell } from 'electron';
 import { exec, execFile } from 'child_process';
 import { AppState, EchoState } from './appState';
 import { AudioRecorder } from './audio/recorder';
@@ -11,7 +11,7 @@ import { MemoryStore } from './memory/memoryStore';
 import { getEditLearner } from './memory/editLearner';
 import { LiveTranscriber } from './transcription/liveTranscriber';
 import { FnKeyMonitor, FnAction } from './fnKeyMonitor';
-import { getSetting } from './settings/settings';
+import { getSetting, setSetting } from './settings/settings';
 import { runPipeline } from './pipeline';
 import { captureScreenshot, captureWindowContext, captureFieldContext, formatWindowContext, cleanupScreenshot } from './context/windowContext';
 import { synthesizeContext } from './context/contextSynthesizer';
@@ -24,6 +24,8 @@ import { logger } from './utils/logger';
 import { toUserFacingError } from './utils/errors';
 import { setupAutoUpdater } from './updater';
 import { ensureSwiftBinaryAsync } from './utils/swiftBinary';
+import { resolveInputMonitoringStatus } from './utils/inputMonitoring';
+import { isFnKeyFree, freeFnKey } from './utils/fnKeyRelease';
 
 // --- Globals ---
 const appState = new AppState();
@@ -457,6 +459,42 @@ function cancelRecording(): void {
   }
 }
 
+/**
+ * One-time offer to free the 🌐/fn key for Echo's primary hotkey. macOS uses a
+ * lone fn tap to change input source by default, which swallows the fn hotkey
+ * before Echo's listen-only tap sees it. Rather than send the user into System
+ * Settings, offer to flip the pref ourselves (Wispr-style). Fires at most once —
+ * the `fnKeyReleaseOffered` flag latches after the first prompt or auto-skip.
+ * Mirror of the fn_key_release block in src-tauri/src/lib.rs.
+ */
+async function maybeOfferFnKeyRelease(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  if (getSetting('fnKeyReleaseOffered')) return;
+  // Already set to "Do Nothing" — nothing to offer; latch so we never ask.
+  if (isFnKeyFree()) {
+    setSetting('fnKeyReleaseOffered', true);
+    return;
+  }
+
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['Free the fn key', 'Not now'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Let Echo use the 🌐 (fn) key?',
+    detail:
+      'macOS currently uses the 🌐/fn key to change your input source, which blocks Echo’s fn hotkey. Echo can set that key to do nothing so the hotkey works.\n\nYou can change this anytime in System Settings → Keyboard → “Press 🌐 key to”.',
+  });
+
+  setSetting('fnKeyReleaseOffered', true);
+  if (response !== 0) return;
+
+  const body = freeFnKey()
+    ? 'fn key freed. If it still switches input source, log out and back in.'
+    : 'Couldn’t change the fn key — set “Press 🌐 key to” to “Do Nothing” in System Settings → Keyboard.';
+  new Notification({ title: 'Echo', body }).show();
+}
+
 // --- App Lifecycle ---
 app.dock?.hide();
 
@@ -488,7 +526,7 @@ app.whenReady().then(() => {
   // IPC first — a failure anywhere below (e.g. a malformed user-typed hotkey)
   // must not leave every window's `echo` API dead.
   setupIPC(appState, whisper, memory, toggle, inserter, recorder, liveTranscriber,
-    () => ({ ok: fnKeyMonitor.inputMonitoring === 'granted', status: fnKeyMonitor.inputMonitoring }),
+    () => resolveInputMonitoringStatus(fnKeyMonitor.inputMonitoring),
     cancelRecording);
 
   // Update tray + overlay on state changes
@@ -615,6 +653,10 @@ app.whenReady().then(() => {
 
   if (!getSetting('onboardingComplete')) {
     showOnboarding();
+  } else {
+    // Only when onboarding is done, so the native dialog never stacks on top of
+    // the onboarding window. New users get it on the next launch.
+    void maybeOfferFnKeyRelease();
   }
 
   console.log('[echo] Ready! Press', hotkey, 'to toggle recording.');

@@ -27,6 +27,18 @@ interface WarmServer {
   proc?: ChildProcess;
 }
 
+/**
+ * A download-progress tick. `percent` is 0–100; `bytesPerSec` is a short rolling
+ * average of transfer speed. `total` is 0 when the server sends no
+ * Content-Length, in which case the UI should fall back to bytes-only display.
+ */
+export interface DownloadProgress {
+  percent: number;
+  downloaded: number;
+  total: number;
+  bytesPerSec: number;
+}
+
 export class WhisperService {
   private binaryPath: string;
   private serverBinaryPath: string;
@@ -335,7 +347,7 @@ export class WhisperService {
   /**
    * Download a whisper model file.
    */
-  async downloadModel(onProgress?: (percent: number) => void, modelName?: string): Promise<void> {
+  async downloadModel(onProgress?: (progress: DownloadProgress) => void, modelName?: string): Promise<void> {
     const name = modelName || 'ggml-base.en.bin';
     const modelPath = this.getModelPath(name);
 
@@ -361,7 +373,7 @@ export class WhisperService {
   private performDownload(
     name: string,
     modelPath: string,
-    onProgress?: (percent: number) => void,
+    onProgress?: (progress: DownloadProgress) => void,
   ): Promise<void> {
     const modelUrl = MODEL_BASE_URL + name;
     console.log(`[whisper] Downloading model from ${modelUrl}...`);
@@ -403,12 +415,32 @@ export class WhisperService {
           const tmpPath = modelPath + '.tmp';
           const file = fs.createWriteStream(tmpPath);
 
+          // Throttle progress to ~10 ticks/sec (a chunk fires per-packet, which
+          // would otherwise flood IPC) and derive a rolling transfer speed from
+          // the bytes moved since the last tick.
+          let lastEmit = Date.now();
+          let lastBytes = 0;
+          const emit = (final = false) => {
+            if (!onProgress) return;
+            const now = Date.now();
+            const dt = (now - lastEmit) / 1000;
+            if (!final && dt < 0.1) return;
+            const bytesPerSec = dt > 0 ? (downloadedBytes - lastBytes) / dt : 0;
+            lastEmit = now;
+            lastBytes = downloadedBytes;
+            onProgress({
+              percent: totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0,
+              downloaded: downloadedBytes,
+              total: totalBytes,
+              bytesPerSec: Math.max(0, Math.round(bytesPerSec)),
+            });
+          };
+
           response.on('data', (chunk: Buffer) => {
             downloadedBytes += chunk.length;
-            if (totalBytes > 0 && onProgress) {
-              onProgress(Math.round((downloadedBytes / totalBytes) * 100));
-            }
+            emit();
           });
+          response.on('end', () => emit(true));
 
           // pipeline (unlike .pipe) surfaces mid-transfer aborts — which emit
           // no 'error' on the response, only 'aborted'/'close' — as

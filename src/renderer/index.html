@@ -1253,6 +1253,17 @@
         </div>
         <div class="toggle-row">
           <div class="toggle-label">
+            <span>fn (🌐) key</span>
+            <small>macOS uses fn to change input source, which blocks the fn hotkey</small>
+          </div>
+          <div class="perm-action">
+            <span id="perm-fnkey" class="status">Checking…</span>
+            <button class="btn-secondary perm-fix" id="perm-fix-fnkey" style="display:none">Free it</button>
+          </div>
+        </div>
+        <p class="card-description" id="perm-fnkey-hint" style="margin:0 0 4px; display:none">fn key freed. If it still switches input source, log out and back in.</p>
+        <div class="toggle-row">
+          <div class="toggle-label">
             <span>Screen Recording</span>
             <small>Only when “Capture screenshots” context is on</small>
           </div>
@@ -1281,7 +1292,7 @@
             <button class="btn-secondary perm-fix" id="perm-fix-automation" style="display:none">Open</button>
           </div>
         </div>
-        <p class="card-description" id="perm-hint" style="margin:12px 0 0; display:none">After granting a permission, quit and reopen Echo for it to take effect. Tip: set Keyboard → “Press fn key to” → “Do Nothing”.</p>
+        <p class="card-description" id="perm-hint" style="margin:12px 0 0; display:none">After granting a permission, quit and reopen Echo for it to take effect.</p>
       </div>
 
       <div class="card">

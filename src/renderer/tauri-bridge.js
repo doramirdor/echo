@@ -99,6 +99,7 @@
     // Onboarding
     openAccessibilitySettings: () => invoke('open_accessibility_settings'),
     openInputMonitoringSettings: () => invoke('open_input_monitoring_settings'),
+    freeFnKey: () => invoke('free_fn_key'),
     openMicrophoneSettings: () => invoke('open_microphone_settings'),
     openScreenRecordingSettings: () => invoke('open_screen_recording_settings'),
     openSpeechRecognitionSettings: () => invoke('open_speech_recognition_settings'),
@@ -128,13 +129,13 @@
     },
 
     // Overlay hover: the window stays interactive at all times. wry has no
-    // Electron-style `forward` option, so toggling setIgnoreCursorEvents(true)
-    // on mouse-leave makes the window click-through and it can then never
-    // receive the next mouse-enter — hover (and click-to-toggle) die after the
-    // first interaction. The window is kept small when idle so an always-
-    // interactive island only blocks a tiny bottom-center area.
-    overlayMouseEnter: () => {},
-    overlayMouseLeave: () => {},
+    // Electron-style `forward` option, so we can't make the transparent margin
+    // click-through and still detect hover. Instead the idle window hugs the
+    // collapsed pill (so it blocks almost nothing) and grows to fit the revealed
+    // "Dictate fn" label only while hovered. The resize is driven from the Rust
+    // side, which also ignores hovers outside the idle state.
+    overlayMouseEnter: () => invoke('overlay_mouse_enter').catch(() => {}),
+    overlayMouseLeave: () => invoke('overlay_mouse_leave').catch(() => {}),
 
     // Overlay drag: mirror the Electron delta approach (record the window's
     // position on mousedown, then set an absolute position from screen-space

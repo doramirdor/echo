@@ -20,6 +20,8 @@ pub struct RunLogEntry {
     pub raw_transcription: String,
     pub refined_text: String,
     pub context: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_app: Option<String>,
     pub stt_engine: String,
     pub llm_provider: String,
     pub duration_ms: u64,
@@ -54,7 +56,7 @@ impl RunLog {
         }
     }
 
-    pub fn add(&self, raw: String, refined: String, context: String, stt: String, llm: String, duration_ms: u64, error: Option<String>) -> RunLogEntry {
+    pub fn add(&self, raw: String, refined: String, context: String, source_app: Option<String>, stt: String, llm: String, duration_ms: u64, error: Option<String>) -> RunLogEntry {
         let id = format!("{}{}", chrono::Utc::now().timestamp_millis(), &uuid::Uuid::new_v4().to_string()[..4]);
         let entry = RunLogEntry {
             id,
@@ -62,6 +64,7 @@ impl RunLog {
             raw_transcription: raw,
             refined_text: refined,
             context,
+            source_app,
             stt_engine: stt,
             llm_provider: llm,
             duration_ms,

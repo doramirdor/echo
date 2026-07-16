@@ -145,6 +145,50 @@ fn microphone_status() -> (bool, &'static str) {
     (false, "unknown")
 }
 
+/// Accessibility (TCC) authorization for THIS process via `AXIsProcessTrusted`.
+/// Non-prompting. In a packaged build the whole app is a single "Echo" identity,
+/// so this reflects exactly the "Echo" row the user toggles in System Settings —
+/// unlike spawning the `text-insert` helper, which is evaluated as its own AX
+/// subject and reads "not trusted" even when Echo itself is granted.
+#[cfg(target_os = "macos")]
+fn accessibility_status_direct() -> bool {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    unsafe { AXIsProcessTrusted() }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn accessibility_status_direct() -> bool {
+    false
+}
+
+/// Input Monitoring (TCC) authorization for THIS process via
+/// `IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)`. Non-prompting. Same
+/// rationale as `accessibility_status_direct`: in a packaged build this is the
+/// authoritative "Echo" grant, so we don't have to wait for the long-running
+/// `fn-monitor` helper to report a status that reflects its own identity.
+/// Access types: 0 granted, 1 denied, 2 unknown.
+#[cfg(target_os = "macos")]
+fn input_monitoring_status_direct() -> (bool, &'static str) {
+    #[link(name = "IOKit", kind = "framework")]
+    extern "C" {
+        fn IOHIDCheckAccess(request: u32) -> u32;
+    }
+    const K_IOHID_REQUEST_TYPE_LISTEN_EVENT: u32 = 1;
+    match unsafe { IOHIDCheckAccess(K_IOHID_REQUEST_TYPE_LISTEN_EVENT) } {
+        0 => (true, "granted"),
+        1 => (false, "denied"),
+        _ => (false, "unknown"),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn input_monitoring_status_direct() -> (bool, &'static str) {
+    (false, "unknown")
+}
+
 /// Trigger the native microphone permission prompt (only meaningful when status
 /// is not-determined). Mirrors Electron's `askForMediaAccess('microphone')`.
 #[cfg(target_os = "macos")]
@@ -296,15 +340,36 @@ async fn get_status(state: tauri::State<'_, EchoApp>) -> Result<serde_json::Valu
     let model_name = state.settings.get(|s| s.whisper_model_name.clone());
     let (whisper_bin, whisper_model) = transcription::whisper::is_ready(&model_name);
     let (sox_ok, sox_msg) = AudioRecorder::check_dependencies();
-    let (ax_ok, ax_msg) = insertion::text_inserter::check_permissions();
 
-    // Input Monitoring is reported by the fn-monitor helper itself (it tries to
-    // tap the fn key and tells us whether the OS allowed it).
-    let im = state.im_status.lock().await.clone();
-    let im_ok = im == "granted";
+    // Accessibility + Input Monitoring:
+    // - Packaged build: the app is a single "Echo" TCC identity, so query the OS
+    //   directly (like Microphone / Screen Recording). This matches the "Echo"
+    //   row the user grants in System Settings. Spawning the `text-insert` helper
+    //   or waiting on `fn-monitor`'s report reads the *helpers'* identity, which
+    //   comes back "not granted" even when Echo itself is trusted.
+    // - Dev build: the helpers disclaim to their own identity (to survive the
+    //   parent's cdhash churn), so their reported grant is what actually gates
+    //   functionality — keep the helper-based checks there.
+    let (ax_ok, ax_msg, im_ok, im) = if utils::provision::is_packaged() {
+        let ax_ok = accessibility_status_direct();
+        let ax_msg = if ax_ok {
+            "Accessibility permissions granted".to_string()
+        } else {
+            "Accessibility permission required. Go to System Settings > Privacy & Security > Accessibility and add Echo.".to_string()
+        };
+        let (im_ok, im) = input_monitoring_status_direct();
+        (ax_ok, ax_msg, im_ok, im.to_string())
+    } else {
+        let (ax_ok, ax_msg) = insertion::text_inserter::check_permissions();
+        // Input Monitoring is reported by the fn-monitor helper itself (it tries
+        // to tap the fn key and tells us whether the OS allowed it).
+        let im = state.im_status.lock().await.clone();
+        (ax_ok, ax_msg, im == "granted", im)
+    };
 
     let (screen_ok, screen_status) = screen_recording_status();
     let (mic_ok, mic_status) = microphone_status();
+    let fn_key_free = utils::fn_key_release::is_fn_key_free();
 
     Ok(serde_json::json!({
         "state": current_state.to_string(),
@@ -319,7 +384,18 @@ async fn get_status(state: tauri::State<'_, EchoApp>) -> Result<serde_json::Valu
         "screenRecording": { "ok": screen_ok, "status": screen_status },
         "speechRecognition": { "ok": false, "status": "unknown" },
         "automation": { "ok": false, "status": "unknown" },
+        // Not a TCC permission — the "Press 🌐 key to" system pref. Reported here
+        // so the panel can show (and fix) it alongside Input Monitoring: both have
+        // to be right for the fn hotkey to fire.
+        "fnKey": { "ok": fn_key_free, "status": if fn_key_free { "free" } else { "captured" } },
     }))
+}
+
+/// Manual re-trigger for the one-time startup offer (also the escape hatch for
+/// anyone who answered "Not now"). Frees the 🌐/fn key for the fn hotkey.
+#[tauri::command]
+fn free_fn_key() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "ok": utils::fn_key_release::free_fn_key() }))
 }
 
 #[tauri::command]
@@ -454,8 +530,8 @@ async fn complete_onboarding(state: tauri::State<'_, EchoApp>, app: AppHandle) -
 async fn download_whisper_model(app: AppHandle, model_name: Option<String>, state: tauri::State<'_, EchoApp>) -> Result<serde_json::Value, String> {
     let name = model_name.unwrap_or_else(|| state.settings.get(|s| s.whisper_model_name.clone()));
     let app2 = app.clone();
-    match transcription::whisper::download_model(&name, move |percent| {
-        let _ = app2.emit("download-progress", percent);
+    match transcription::whisper::download_model(&name, move |progress| {
+        let _ = app2.emit("download-progress", progress);
     }).await {
         Ok(()) => Ok(serde_json::json!({ "success": true })),
         Err(e) => Ok(serde_json::json!({ "success": false, "error": e })),
@@ -602,19 +678,8 @@ async fn remove_template(state: tauri::State<'_, EchoApp>, id: String) -> Result
 
 #[tauri::command]
 async fn get_stats(state: tauri::State<'_, EchoApp>) -> Result<serde_json::Value, String> {
-    let entries = state.run_log.get_all();
-    let total = entries.len();
-    let total_words: usize = entries.iter()
-        .map(|e| e.refined_text.split_whitespace().count())
-        .sum();
-    let avg_duration: f64 = if total > 0 {
-        entries.iter().map(|e| e.duration_ms as f64).sum::<f64>() / total as f64
-    } else { 0.0 };
-    Ok(serde_json::json!({
-        "totalRecordings": total,
-        "totalWords": total_words,
-        "averageDuration": avg_duration,
-    }))
+    let stats = history::stats::compute_stats(&state.run_log);
+    serde_json::to_value(stats).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -626,6 +691,26 @@ async fn resize_overlay(app: AppHandle, expanded: bool) -> Result<(), String> {
             tauri::LogicalSize::new(180.0, 36.0)
         };
         let _ = win.set_size(tauri::Size::Logical(size));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn overlay_mouse_enter(app: AppHandle, state: tauri::State<'_, EchoApp>) -> Result<(), String> {
+    OVERLAY_HOVERED.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Only grow while idle — during recording/processing/error the window is
+    // already at its active size and must not be disturbed by a stray hover.
+    if state.app_state.get_state().await == EchoState::Idle {
+        set_overlay_bounds(&app, OVERLAY_HOVER_W, OVERLAY_HOVER_H);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn overlay_mouse_leave(app: AppHandle, state: tauri::State<'_, EchoApp>) -> Result<(), String> {
+    OVERLAY_HOVERED.store(false, std::sync::atomic::Ordering::Relaxed);
+    if state.app_state.get_state().await == EchoState::Idle {
+        set_overlay_bounds(&app, OVERLAY_IDLE_W, OVERLAY_IDLE_H);
     }
     Ok(())
 }
@@ -1261,7 +1346,7 @@ async fn run_pipeline(
                 use tauri_plugin_notification::NotificationExt;
                 let _ = app.notification().builder().title("Echo").body("No speech detected").show();
             }
-            run_log.add(raw_text.clone(), String::new(), String::new(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
+            run_log.add(raw_text.clone(), String::new(), String::new(), source_app.clone(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
             app_state.set_state(EchoState::Idle, None).await;
             let _ = app.emit("state-change", ("idle", serde_json::json!({})));
             return Ok(());
@@ -1502,7 +1587,7 @@ async fn run_pipeline(
         })));
 
         // Log run
-        run_log.add(raw_text, refined_text.clone(), String::new(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
+        run_log.add(raw_text, refined_text.clone(), String::new(), source_app.clone(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
 
         // Vocabulary learning
         memory::vocabulary::analyze_and_learn(memory, &cleaned, &refined_text);
@@ -1552,7 +1637,7 @@ async fn run_pipeline(
             Some(p) => format!("{} (recording saved to {})", msg, p.to_string_lossy()),
             None => msg,
         };
-        run_log.add(String::new(), String::new(), String::new(), stt_engine, llm_provider, pipeline_start.elapsed().as_millis() as u64, Some(logged_error));
+        run_log.add(String::new(), String::new(), String::new(), source_app.clone(), stt_engine, llm_provider, pipeline_start.elapsed().as_millis() as u64, Some(logged_error));
 
         let state = app_state.clone();
         tokio::spawn(async move {
@@ -1605,9 +1690,18 @@ fn show_onboarding(app: &AppHandle) {
         let _ = win.set_focus();
         return;
     }
+    // Grow the window ~20% over the old 520×680 so the taller steps (LLM engine
+    // list + API key) fit without scrolling, but never exceed the display's work
+    // area on smaller screens — leave a small margin so it isn't edge-to-edge.
+    let (mut width, mut height) = (624.0_f64, 816.0_f64);
+    if let Ok(Some(mon)) = app.primary_monitor() {
+        let area = mon.work_area().size.to_logical::<f64>(mon.scale_factor());
+        width = width.min(area.width - 40.0);
+        height = height.min(area.height - 40.0);
+    }
     let _ = WebviewWindowBuilder::new(app, "onboarding", WebviewUrl::App("onboarding.html".into()))
         .title("Welcome to Echo")
-        .inner_size(520.0, 680.0)
+        .inner_size(width, height)
         .resizable(false)
         .build();
 }
@@ -1633,14 +1727,34 @@ fn overlay_position(app: &AppHandle, w: f64, h: f64) -> (f64, f64) {
     }
 }
 
-// Idle: a small pill (just the fn handle / hover-expanded "Dictate" label), so
-// the always-present island only blocks a tiny bottom-center area. Active
-// (recording / processing / error): the full size that fits the live transcript
-// bubble above the pill and multi-line error text.
-const OVERLAY_IDLE_W: f64 = 210.0;
-const OVERLAY_IDLE_H: f64 = 60.0;
+// Idle: the window hugs the collapsed pill so the transparent (but click-eating)
+// margin around it is only a few px — otherwise clicks "next to" the visible bar
+// land on the overlay instead of passing through to the app behind. On hover the
+// window grows to Hover size to fit the revealed "Dictate fn" label. wry has no
+// click-through-with-forward option (Electron's trick), so we resize the window
+// on hover instead of toggling ignore-cursor-events. Active (recording /
+// processing / error): the full size that fits the live-transcript bubble above
+// the pill and multi-line error text.
+const OVERLAY_IDLE_W: f64 = 76.0;
+const OVERLAY_IDLE_H: f64 = 40.0;
+const OVERLAY_HOVER_W: f64 = 140.0;
+const OVERLAY_HOVER_H: f64 = 50.0;
 const OVERLAY_ACTIVE_W: f64 = 340.0;
 const OVERLAY_ACTIVE_H: f64 = 160.0;
+
+// Whether the cursor is currently over the idle pill. Set by the overlay
+// mouse-enter/leave commands so the delayed idle-shrink (below) restores the
+// hover size rather than clipping a pill the user is actively pointing at.
+static OVERLAY_HOVERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The idle-state window size, accounting for whether the pill is hovered.
+fn overlay_idle_size() -> (f64, f64) {
+    if OVERLAY_HOVERED.load(std::sync::atomic::Ordering::Relaxed) {
+        (OVERLAY_HOVER_W, OVERLAY_HOVER_H)
+    } else {
+        (OVERLAY_IDLE_W, OVERLAY_IDLE_H)
+    }
+}
 
 /// Clamp a logical (x, y) so a `w`×`h` window stays within the monitor it
 /// currently sits on (falls back to the primary monitor). Keeps the overlay
@@ -2023,8 +2137,9 @@ pub fn run() {
             get_status, toggle, cancel_recording,
             open_settings_window, toggle_overlay_cmd,
             reinsert_text, resize_overlay, get_stats,
+            overlay_mouse_enter, overlay_mouse_leave,
             scan_project, open_accessibility_settings,
-            open_input_monitoring_settings, open_microphone_settings,
+            open_input_monitoring_settings, open_microphone_settings, free_fn_key,
             open_screen_recording_settings, open_speech_recognition_settings,
             open_automation_settings,
             complete_onboarding,
@@ -2145,6 +2260,49 @@ pub fn run() {
                 log::info!("[echo] fn key monitor started");
             }
 
+            // ── Offer to free the 🌐/fn key for the primary hotkey (one-time) ──
+            // macOS uses a lone fn tap to change input source by default, which
+            // swallows the fn hotkey before Echo's listen-only tap sees it. Offer
+            // to flip the pref ourselves (Wispr-style) rather than send the user
+            // into System Settings. Gated on onboarding-done so the native dialog
+            // never stacks on the onboarding window; latched via
+            // `fn_key_release_offered` so it fires at most once. Mirror of
+            // maybeOfferFnKeyRelease() in src/main/index.ts.
+            #[cfg(target_os = "macos")]
+            {
+                let (onboarded, offered, settings) = {
+                    let echo = app.state::<EchoApp>();
+                    (
+                        echo.settings.get(|s| s.onboarding_complete),
+                        echo.settings.get(|s| s.fn_key_release_offered),
+                        echo.settings.clone(),
+                    )
+                };
+                if onboarded && !offered && !utils::fn_key_release::is_fn_key_free() {
+                    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                    let notify_handle = app.handle().clone();
+                    app.dialog()
+                        .message("macOS currently uses the 🌐/fn key to change your input source, which blocks Echo's fn hotkey. Echo can set that key to do nothing so the hotkey works.\n\nYou can change this anytime in System Settings → Keyboard → \"Press 🌐 key to\".")
+                        .title("Let Echo use the 🌐 (fn) key?")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Free the fn key".to_string(),
+                            "Not now".to_string(),
+                        ))
+                        .show(move |ok| {
+                            settings.set_value("fnKeyReleaseOffered", serde_json::Value::Bool(true));
+                            if ok {
+                                use tauri_plugin_notification::NotificationExt;
+                                let body = if utils::fn_key_release::free_fn_key() {
+                                    "fn key freed. If it still switches input source, log out and back in."
+                                } else {
+                                    "Couldn't change the fn key — set \"Press 🌐 key to\" to \"Do Nothing\" in System Settings → Keyboard."
+                                };
+                                let _ = notify_handle.notification().builder().title("Echo").body(body).show();
+                            }
+                        });
+                }
+            }
+
             // ── Register the text-insert helper for Accessibility ──
             // Insertion posts keystrokes via CGEvent from the disclaimed
             // `text-insert` helper (its own stable TCC identity), so it needs its
@@ -2248,7 +2406,8 @@ pub fn run() {
                                             if ah.state::<EchoApp>().settings.get(|s| s.auto_hide_overlay) {
                                                 let _ = w.hide();
                                             } else {
-                                                set_overlay_bounds(&ah, OVERLAY_IDLE_W, OVERLAY_IDLE_H);
+                                                let (iw, ih) = overlay_idle_size();
+                                                set_overlay_bounds(&ah, iw, ih);
                                             }
                                         }
                                     });
@@ -2265,7 +2424,8 @@ pub fn run() {
                                             if ah.state::<EchoApp>().settings.get(|s| s.auto_hide_overlay) {
                                                 let _ = w.hide();
                                             } else {
-                                                set_overlay_bounds(&ah, OVERLAY_IDLE_W, OVERLAY_IDLE_H);
+                                                let (iw, ih) = overlay_idle_size();
+                                                set_overlay_bounds(&ah, iw, ih);
                                             }
                                         }
                                     });

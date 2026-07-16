@@ -60,6 +60,7 @@ export interface EchoSettings {
   whisperMode: boolean;       // boost gain + compressor for whispered speech
   crashReportingEnabled: boolean;
   autoUpdateEnabled: boolean;
+  fnKeyReleaseOffered: boolean; // one-time: have we offered to free the 🌐/fn key?
 }
 
 const defaults: EchoSettings = {
@@ -115,6 +116,7 @@ const defaults: EchoSettings = {
   whisperMode: false,
   crashReportingEnabled: false,
   autoUpdateEnabled: true,
+  fnKeyReleaseOffered: false,
 };
 
 const store = new Store<EchoSettings>({

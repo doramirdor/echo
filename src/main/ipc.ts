@@ -20,6 +20,7 @@ import { logger } from './utils/logger';
 import { templateStore, getRunLog } from './pipeline';
 import { resizeOverlay, toggleOverlay } from './overlay';
 import { openSettings, getSettingsWindow, getOnboardingWindow, closeOnboarding } from './windows';
+import { getFnKeyStatus, freeFnKey } from './utils/fnKeyRelease';
 
 export function setupIPC(
   appState: AppState,
@@ -101,7 +102,15 @@ export function setupIPC(
     screenRecording: getScreenRecordingStatus(),
     speechRecognition: { ok: false, status: 'unknown' },
     automation: { ok: false, status: 'unknown' },
+    // Not a TCC permission — the "Press 🌐 key to" system pref. Reported here so
+    // the panel can show (and fix) it alongside Input Monitoring: both have to be
+    // right for the fn hotkey to fire.
+    fnKey: getFnKeyStatus(),
   }));
+
+  // Manual re-trigger for the one-time startup offer (also the escape hatch for
+  // anyone who answered "Not now"). Frees the 🌐/fn key for the fn hotkey.
+  ipcMain.handle('free-fn-key', () => ({ ok: freeFnKey() }));
 
   // Overlay actions
   ipcMain.handle('toggle', () => toggle());
@@ -203,15 +212,15 @@ export function setupIPC(
   ipcMain.handle('download-whisper-model', async (_e, modelName?: string) => {
     try {
       const name = modelName || getSetting('whisperModelName');
-      await whisper.downloadModel((percent: number) => {
+      await whisper.downloadModel((progress) => {
         // Send progress to both onboarding and settings windows
         const onbWin = getOnboardingWindow();
         if (onbWin && !onbWin.isDestroyed()) {
-          onbWin.webContents.send('download-progress', percent);
+          onbWin.webContents.send('download-progress', progress);
         }
         const setWin = getSettingsWindow();
         if (setWin && !setWin.isDestroyed()) {
-          setWin.webContents.send('download-progress', percent);
+          setWin.webContents.send('download-progress', progress);
         }
       }, name);
       return { success: true };

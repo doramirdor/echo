@@ -163,7 +163,9 @@
       overflow: hidden;
       margin-top: 8px;
     }
-    .progress-fill { height: 100%; background: var(--accent); border-radius: 3px; width: 0%; transition: width 0.3s; }
+    /* Filled via scaleX (transform is GPU-composited — no layout thrash from
+       animating width). transform-origin:left grows it from the left edge. */
+    .progress-fill { height: 100%; width: 100%; background: var(--accent); border-radius: 3px; transform: scaleX(0); transform-origin: left; transition: transform 0.3s ease; }
     .progress-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 
     /* Badge */
@@ -215,6 +217,117 @@
       margin-right: 7px;
     }
     @keyframes echo-spin { to { transform: rotate(360deg); } }
+
+    /* Permission cards (step 0) — one actionable row per permission */
+    .perm-card {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      padding: 12px 14px;
+      background: var(--bg-card);
+      border: 1.5px solid var(--border-color);
+      border-radius: var(--radius);
+      margin-bottom: 9px;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .perm-card.granted { border-color: #bfe3d4; background: var(--accent-light); }
+    .perm-icon {
+      width: 38px; height: 38px;
+      border-radius: 10px;
+      background: var(--bg-soft);
+      color: var(--text-secondary);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .perm-card.granted .perm-icon { background: #fff; color: var(--accent); }
+    .perm-body { flex: 1; min-width: 0; }
+    .perm-name { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+    .perm-sub { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+    .perm-action { flex-shrink: 0; display: flex; align-items: center; }
+    .perm-action .btn-secondary { padding: 6px 15px; font-size: 12px; }
+    .perm-check {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      background: #cbe9dc;
+      color: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .perm-optional { font-size: 11px; color: var(--text-muted); font-weight: 400; margin-left: 6px; }
+    .perm-hint {
+      font-size: 12px;
+      color: var(--warning);
+      background: var(--warning-bg);
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      margin-top: -2px; margin-bottom: 9px;
+    }
+
+    /* "Getting things ready" download card (step 1) */
+    .setup-card {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: var(--bg-card);
+      border: 1.5px solid var(--border-color);
+      border-radius: var(--radius);
+    }
+    .setup-head { display: flex; align-items: center; gap: 12px; }
+    .setup-icon {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      background: var(--accent-light);
+      color: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .setup-body { flex: 1; min-width: 0; }
+    .setup-name { font-weight: 600; font-size: 14px; }
+    .setup-size { font-weight: 400; font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+    .setup-sub { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+    .setup-mark { flex-shrink: 0; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
+    .setup-mark .spinner { margin: 0; }
+    .setup-stats {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 12px; color: var(--text-secondary);
+      margin-top: 7px;
+      font-variant-numeric: tabular-nums;
+    }
+    .setup-stats b { color: var(--text-primary); font-weight: 650; margin-left: 8px; }
+    .setup-note {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12px; color: var(--text-muted);
+      margin-top: 11px; padding-top: 11px;
+      border-top: 1px solid var(--border-color);
+    }
+    .setup-card .progress-track { margin-top: 10px; height: 7px; }
+
+    /* Floating download pill — reassurance that the model keeps downloading
+       after you move past the setup step */
+    .dl-float {
+      position: fixed;
+      top: 16px; right: 16px;
+      width: 214px;
+      padding: 12px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 24px rgba(26,26,26,0.12);
+      z-index: 50;
+      opacity: 0;
+      transform: translateY(-6px);
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.22,1,0.36,1);
+    }
+    .dl-float.show { opacity: 1; transform: translateY(0); }
+    .dl-float-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .dl-float-title { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--text-primary); }
+    .dl-float-pct { font-size: 12px; font-weight: 650; color: var(--accent); font-variant-numeric: tabular-nums; }
+    .dl-float .progress-track { margin-top: 8px; height: 5px; }
+    .dl-float-sub { font-size: 11px; color: var(--text-muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .perm-card, .perm-icon, .progress-fill, .dl-float { transition: none; }
+    }
   </style>
 </head>
 <body>
@@ -251,45 +364,66 @@
 
     <!-- Step 0: Prerequisites -->
     <div class="step-page active" id="page-0">
-      <div class="step-title">Prerequisites</div>
-      <div class="step-desc">Checking that your system is ready for Echo.</div>
+      <div class="step-title">Permissions</div>
+      <div class="step-desc">Echo needs a couple of macOS permissions to hear your voice and type where your cursor is. Grant them now, or skip and do it later in Settings.</div>
 
-      <div class="info-card">
-        <div class="check-row">
-          <span class="check-label">Microphone access</span>
-          <span class="badge" id="chk-mic">Checking...</span>
+      <div class="perm-card" id="perm-mic">
+        <div class="perm-icon">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M5 9a5 5 0 0010 0"/><path d="M10 14v3.5M7.5 17.5h5"/></svg>
         </div>
-        <div class="check-row">
-          <span class="check-label">Accessibility permission</span>
-          <span class="badge" id="chk-ax">Checking...</span>
+        <div class="perm-body">
+          <div class="perm-name">Microphone</div>
+          <div class="perm-sub" id="mic-sub">Checking&hellip;</div>
         </div>
-        <div class="check-row">
-          <span class="check-label">Input monitoring <span class="optional-tag">for the fn hotkey</span></span>
-          <span class="badge" id="chk-input">Checking...</span>
-        </div>
-        <div class="check-row">
-          <span class="check-label">Audio recording</span>
-          <span class="badge" id="chk-sox">Checking...</span>
+        <div class="perm-action">
+          <span class="perm-check" id="mic-check" style="display:none"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>
+          <button class="btn-secondary" id="btn-open-mic" style="display:none">Enable</button>
         </div>
       </div>
 
-      <div style="font-size:12px; color:var(--text-muted); margin-top:8px;">
-        <span id="mic-hint" style="display:none">
-          <button class="btn-secondary" id="btn-open-mic" style="padding:5px 12px; font-size:12px;">Open System Settings</button>
-          &nbsp; Grant Echo in Privacy &amp; Security &rarr; Microphone.
-        </span>
-        <span id="ax-hint" style="display:none">
-          <button class="btn-secondary" id="btn-open-ax" style="padding:5px 12px; font-size:12px;">Open System Settings</button>
-          &nbsp; Grant Accessibility in Privacy &amp; Security.
-        </span>
-        <span id="input-hint" style="display:none">
-          <button class="btn-secondary" id="btn-open-input" style="padding:5px 12px; font-size:12px;">Open System Settings</button>
-          &nbsp; Grant Echo under Input Monitoring, then restart Echo. Tip: set Keyboard &rarr; "Press fn key to" &rarr; "Do Nothing".
-        </span>
-        <span id="sox-hint" style="display:none; margin-top:4px;">
-          Grant microphone access in System Settings &rarr; Privacy &amp; Security &rarr; Microphone. If it still fails, install Xcode tools: <code>xcode-select --install</code>
-        </span>
+      <div class="perm-card" id="perm-ax">
+        <div class="perm-icon">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3l5 14 2.2-5.8L17 9z"/></svg>
+        </div>
+        <div class="perm-body">
+          <div class="perm-name">Accessibility</div>
+          <div class="perm-sub" id="ax-sub">Checking&hellip;</div>
+        </div>
+        <div class="perm-action">
+          <span class="perm-check" id="ax-check" style="display:none"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>
+          <button class="btn-secondary" id="btn-open-ax" style="display:none">Enable</button>
+        </div>
       </div>
+
+      <div class="perm-card" id="perm-input">
+        <div class="perm-icon">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5.5" width="16" height="9" rx="2"/><path d="M5 8.5h.01M8 8.5h.01M11 8.5h.01M14 8.5h.01M6.5 11.5h7"/></svg>
+        </div>
+        <div class="perm-body">
+          <div class="perm-name">Input monitoring <span class="perm-optional">optional</span></div>
+          <div class="perm-sub" id="input-sub">Checking&hellip;</div>
+        </div>
+        <div class="perm-action">
+          <span class="perm-check" id="input-check" style="display:none"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>
+          <button class="btn-secondary" id="btn-open-input" style="display:none">Enable</button>
+        </div>
+      </div>
+      <div class="perm-hint" id="input-hint" style="display:none">After enabling, restart Echo. Tip: set Keyboard &rarr; &ldquo;Press fn key to&rdquo; &rarr; &ldquo;Do Nothing&rdquo;.</div>
+
+      <div class="perm-card" id="perm-sox">
+        <div class="perm-icon">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8.5v3M6.5 5.5v9M10 3.5v13M13.5 5.5v9M17 8.5v3"/></svg>
+        </div>
+        <div class="perm-body">
+          <div class="perm-name">Audio recording</div>
+          <div class="perm-sub" id="sox-sub">Checking&hellip;</div>
+        </div>
+        <div class="perm-action">
+          <span class="perm-check" id="sox-check" style="display:none"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>
+          <span class="badge badge-error" id="sox-badge" style="display:none">Unavailable</span>
+        </div>
+      </div>
+      <div class="perm-hint" id="sox-hint" style="display:none">Grant Microphone access above. If it still fails, install Xcode tools: <code>xcode-select --install</code></div>
 
       <div class="nav-row">
         <span></span>
@@ -315,14 +449,30 @@
         <div class="card-desc">Built-in, no setup. Lower accuracy than Whisper.</div>
       </div>
 
-      <!-- Whisper setup section (shown when whisper selected & not fully ready) -->
-      <div class="download-section" id="whisper-setup" style="display:none">
-        <button class="btn-primary" id="btn-setup-whisper">Setup Whisper</button>
-        <span id="setup-status" style="font-size:12px; color:var(--text-secondary); margin-left:8px;"></span>
-        <div class="progress-track" id="setup-track" style="display:none">
+      <!-- Whisper setup — auto-starts on entry, keeps running in the background -->
+      <div class="setup-card" id="whisper-setup" style="display:none">
+        <div class="setup-head">
+          <div class="setup-icon">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M5 9a5 5 0 0010 0"/><path d="M10 14v3.5M7.5 17.5h5"/></svg>
+          </div>
+          <div class="setup-body">
+            <div class="setup-name">Whisper model <span class="setup-size" id="setup-size">base.en &middot; ~142 MB</span></div>
+            <div class="setup-sub" id="setup-status">Getting things ready&hellip;</div>
+          </div>
+          <div class="setup-mark" id="setup-mark"><span class="spinner"></span></div>
+        </div>
+        <div class="progress-track">
           <div class="progress-fill" id="setup-fill"></div>
         </div>
-        <div class="progress-label" id="setup-label" style="display:none"></div>
+        <div class="setup-stats">
+          <span id="setup-bytes">&mdash;</span>
+          <span><span id="setup-speed"></span><b id="setup-percent">0%</b></span>
+        </div>
+        <div class="setup-note" id="setup-note">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v9M6 8.5l4 4 4-4M3.5 15.5h13"/></svg>
+          You can keep going &mdash; this finishes in the background.
+        </div>
+        <button class="btn-secondary" id="btn-setup-retry" style="display:none; margin-top:11px;">Retry setup</button>
       </div>
 
       <!-- Groq config (shown when groq selected) -->
@@ -413,6 +563,19 @@
     </div>
   </div>
 
+  <!-- Floating download indicator — appears once you leave the setup step while
+       the model is still downloading -->
+  <div class="dl-float" id="dl-float">
+    <div class="dl-float-top">
+      <span class="dl-float-title"><span class="spinner"></span>Downloading model</span>
+      <span class="dl-float-pct" id="dl-float-pct">0%</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="dl-float-fill"></div>
+    </div>
+    <div class="dl-float-sub" id="dl-float-sub"></div>
+  </div>
+
   <script src="tauri-bridge.js"></script>
   <script>
     var api = window.echo;
@@ -421,6 +584,26 @@
     var selectedSTT = 'whisper';
     var selectedLLM = 'claude-cli';
     var whisperReady = { binary: false, model: false };
+    var dlActive = false;      // model download in flight
+    var setupRunning = false;  // whisper build+download routine running
+
+    // Progress fills are scaled via transform (GPU-composited), so drive them
+    // through a helper instead of setting width.
+    function setFill(el, percent) {
+      if (el) el.style.transform = 'scaleX(' + Math.max(0, Math.min(100, percent)) / 100 + ')';
+    }
+    function fmtBytes(n) {
+      if (!n || n < 0) n = 0;
+      if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';
+      var mb = n / (1024 * 1024);
+      if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+      return mb.toFixed(1) + ' MB';
+    }
+    // The floating pill only appears once the user has moved off the setup step
+    // (page 1), where the inline card already shows the same progress.
+    function updateFloat() {
+      document.getElementById('dl-float').classList.toggle('show', dlActive && currentPage !== 1);
+    }
 
     // --- Navigation ---
     function goTo(page) {
@@ -431,6 +614,7 @@
         dot.className = 'progress-dot' + (i < page ? ' done' : '') + (i === page ? ' active' : '');
       }
       currentPage = page;
+      updateFloat();
     }
 
     // Nav buttons
@@ -442,65 +626,52 @@
     document.getElementById('btn-back-3').addEventListener('click', function() { goTo(2); });
     document.getElementById('btn-finish').addEventListener('click', function() { finishOnboarding(); });
 
-    // --- Step 0: Prerequisites ---
+    // --- Step 0: Permissions ---
+    // Toggle one permission card between its granted state (accent tint + check)
+    // and its ungranted state (neutral card + "Enable" button).
+    function renderPerm(key, granted, subText, warn) {
+      var card = document.getElementById('perm-' + key);
+      var sub = document.getElementById(key + '-sub');
+      var check = document.getElementById(key + '-check');
+      var btn = document.getElementById('btn-open-' + key);
+      card.classList.toggle('granted', granted);
+      sub.textContent = granted ? 'Access granted' : subText;
+      sub.style.color = granted ? 'var(--accent)' : (warn ? 'var(--danger)' : 'var(--text-secondary)');
+      if (check) check.style.display = granted ? '' : 'none';
+      if (btn) btn.style.display = granted ? 'none' : '';
+    }
+
     async function checkPrereqs() {
       var s = await api.getStatus();
 
-      // Microphone — Electron reports the precise TCC status; Tauri may
-      // report "unknown", in which case the first recording will prompt.
-      var micBadge = document.getElementById('chk-mic');
-      var micHint = document.getElementById('mic-hint');
+      // Microphone — Electron reports the precise TCC status; Tauri may report
+      // "unknown", in which case the first recording prompts. Either way, offer
+      // Enable: it triggers the native prompt (Electron) or opens Settings.
       var mic = s.microphone || { ok: false, status: 'unknown' };
       if (mic.ok) {
-        micBadge.textContent = 'Granted';
-        micBadge.className = 'badge badge-ok';
-        micHint.style.display = 'none';
+        renderPerm('mic', true);
       } else if (mic.status === 'not-determined' || mic.status === 'unknown') {
-        micBadge.textContent = 'Will prompt';
-        micBadge.className = 'badge badge-ok';
-        micHint.style.display = 'none';
+        renderPerm('mic', false, 'Click Enable to allow microphone access', false);
       } else {
-        micBadge.textContent = 'Not granted';
-        micBadge.className = 'badge badge-error';
-        micHint.style.display = '';
+        renderPerm('mic', false, 'Denied — open Settings to allow', true);
       }
 
-      var axBadge = document.getElementById('chk-ax');
-      var axHint = document.getElementById('ax-hint');
-      if (s.accessibility.ok) {
-        axBadge.textContent = 'Granted';
-        axBadge.className = 'badge badge-ok';
-        axHint.style.display = 'none';
-      } else {
-        axBadge.textContent = 'Not granted';
-        axBadge.className = 'badge badge-error';
-        axHint.style.display = '';
-      }
+      renderPerm('ax', s.accessibility.ok, 'Lets Echo type text where your cursor is', false);
 
-      var soxBadge = document.getElementById('chk-sox');
-      var soxHint = document.getElementById('sox-hint');
-      if (s.sox.ok) {
-        soxBadge.textContent = 'Ready';
-        soxBadge.className = 'badge badge-ok';
-        soxHint.style.display = 'none';
-      } else {
-        soxBadge.textContent = 'Unavailable';
-        soxBadge.className = 'badge badge-error';
-        soxHint.style.display = '';
-      }
-
-      var inputBadge = document.getElementById('chk-input');
-      var inputHint = document.getElementById('input-hint');
       var im = s.inputMonitoring || { ok: false };
-      if (im.ok) {
-        inputBadge.textContent = 'Granted';
-        inputBadge.className = 'badge badge-ok';
-        inputHint.style.display = 'none';
-      } else {
-        inputBadge.textContent = 'Not granted';
-        inputBadge.className = 'badge badge-error';
-        inputHint.style.display = '';
-      }
+      renderPerm('input', im.ok, 'Powers the fn hotkey to start recording', false);
+      document.getElementById('input-hint').style.display = im.ok ? 'none' : '';
+
+      // Audio recording readiness — informational (no Settings pane to open),
+      // so it shows a check when ready and an "Unavailable" badge otherwise.
+      var soxOk = s.sox.ok;
+      document.getElementById('perm-sox').classList.toggle('granted', soxOk);
+      var soxSub = document.getElementById('sox-sub');
+      soxSub.textContent = soxOk ? 'Ready' : 'Native recorder unavailable';
+      soxSub.style.color = soxOk ? 'var(--accent)' : 'var(--danger)';
+      document.getElementById('sox-check').style.display = soxOk ? '' : 'none';
+      document.getElementById('sox-badge').style.display = soxOk ? 'none' : '';
+      document.getElementById('sox-hint').style.display = soxOk ? 'none' : '';
 
       whisperReady = s.whisper;
     }
@@ -538,32 +709,28 @@
     async function updateSTTUI() {
       var whisperSetup = document.getElementById('whisper-setup');
       var groqCfg = document.getElementById('groq-config');
-      whisperSetup.style.display = 'none';
       groqCfg.style.display = 'none';
+      // Never yank the setup card while it's mid-run — that would drop the
+      // progress the user is watching.
+      if (!setupRunning) whisperSetup.style.display = 'none';
 
       if (selectedSTT === 'whisper') {
         var status = await api.checkWhisperBinary();
         whisperReady = status;
         var statusBadge = document.getElementById('whisper-status');
+        statusBadge.style.display = '';
 
         if (status.binary && status.model) {
-          statusBadge.style.display = '';
           statusBadge.textContent = 'Ready';
           statusBadge.className = 'badge badge-ok';
+          if (!setupRunning) whisperSetup.style.display = 'none';
         } else {
-          statusBadge.style.display = '';
-          statusBadge.textContent = 'Setup needed';
+          statusBadge.textContent = 'Setting up';
           statusBadge.className = 'badge badge-warn';
           whisperSetup.style.display = '';
-          // Update button text based on what's missing
-          var btn = document.getElementById('btn-setup-whisper');
-          if (!status.binary && !status.model) {
-            btn.textContent = 'Build & Download Whisper';
-          } else if (!status.binary) {
-            btn.textContent = 'Build Whisper Binary';
-          } else {
-            btn.textContent = 'Download Whisper Model';
-          }
+          // Kick off setup automatically — whisper is the default, and the
+          // model is required for it to work. runWhisperSetup() is idempotent.
+          runWhisperSetup();
         }
       } else if (selectedSTT === 'groq') {
         groqCfg.style.display = '';
@@ -572,86 +739,101 @@
       }
     }
 
-    // Setup whisper (build binary + download model)
-    var settingUp = false;
-    document.getElementById('btn-setup-whisper').addEventListener('click', async function() {
-      if (settingUp) return;
-      settingUp = true;
-      var btn = document.getElementById('btn-setup-whisper');
-      var track = document.getElementById('setup-track');
-      var fill = document.getElementById('setup-fill');
-      var label = document.getElementById('setup-label');
-      var statusEl = document.getElementById('setup-status');
+    // Setup whisper (build binary if needed + download model). Auto-triggered on
+    // entering the STT step; safe to call repeatedly (guarded by setupRunning).
+    async function runWhisperSetup() {
+      if (setupRunning) return;
+      setupRunning = true;
 
-      btn.disabled = true;
-      track.style.display = '';
-      label.style.display = '';
-      statusEl.textContent = '';
+      var statusEl = document.getElementById('setup-status');
+      var mark = document.getElementById('setup-mark');
+      var retry = document.getElementById('btn-setup-retry');
+      var note = document.getElementById('setup-note');
+
+      retry.style.display = 'none';
+      note.style.display = '';
+      mark.innerHTML = '<span class="spinner"></span>';
+      setFill(document.getElementById('setup-fill'), 0);
+      document.getElementById('setup-percent').textContent = '0%';
+      document.getElementById('setup-bytes').textContent = '—';
+      document.getElementById('setup-speed').textContent = '';
+
+      function fail(msg) {
+        setupRunning = false;
+        dlActive = false;
+        updateFloat();
+        mark.innerHTML = '';
+        statusEl.textContent = msg;
+        statusEl.style.color = 'var(--danger)';
+        note.style.display = 'none';
+        retry.style.display = '';
+      }
 
       var status = await api.checkWhisperBinary();
-      var steps = [];
-      if (!status.binary) steps.push('binary');
-      if (!status.model) steps.push('model');
-      var totalSteps = steps.length;
-      var completedSteps = 0;
 
-      // Step 1: Build binary if needed
+      // Build the binary if it's missing (packaged builds ship it, so this is
+      // usually skipped and only the model downloads).
       if (!status.binary) {
-        btn.innerHTML = '<span class="spinner"></span>Building whisper.cpp...';
-        label.textContent = 'Cloning and compiling (this may take a few minutes)...';
-        fill.style.width = '5%';
-
+        statusEl.textContent = 'Building whisper.cpp (one-time, a few minutes)…';
+        statusEl.style.color = 'var(--text-secondary)';
         var buildResult = await api.buildWhisperBinary();
-        if (!buildResult.success) {
-          settingUp = false;
-          btn.disabled = false;
-          btn.textContent = 'Retry Setup';
-          label.textContent = 'Build failed: ' + buildResult.error;
-          label.style.color = 'var(--danger)';
-          return;
-        }
-        completedSteps++;
-        fill.style.width = Math.round((completedSteps / totalSteps) * 100) + '%';
+        if (!buildResult.success) { fail('Build failed: ' + buildResult.error); return; }
       }
 
-      // Step 2: Download model if needed
+      // Download the model if it's missing.
       if (!status.model) {
-        btn.innerHTML = '<span class="spinner"></span>Downloading model...';
-        label.textContent = 'Downloading base.en model (~142MB)...';
-
+        dlActive = true;
+        updateFloat();
+        statusEl.textContent = 'Downloading model…';
+        statusEl.style.color = 'var(--text-secondary)';
         var dlResult = await api.downloadWhisperModel();
-        if (!dlResult.success) {
-          settingUp = false;
-          btn.disabled = false;
-          btn.textContent = 'Retry Setup';
-          label.textContent = 'Download failed: ' + dlResult.error;
-          label.style.color = 'var(--danger)';
-          return;
-        }
-        completedSteps++;
-        fill.style.width = '100%';
+        if (!dlResult.success) { fail('Download failed: ' + dlResult.error); return; }
       }
 
-      settingUp = false;
-      btn.textContent = 'Setup Complete';
-      label.textContent = 'Whisper is ready!';
-      label.style.color = 'var(--success)';
+      // Done.
+      setupRunning = false;
+      dlActive = false;
+      updateFloat();
+      setFill(document.getElementById('setup-fill'), 100);
+      document.getElementById('setup-percent').textContent = '100%';
+      document.getElementById('setup-bytes').textContent = 'Complete';
+      document.getElementById('setup-speed').textContent = '';
+      statusEl.textContent = 'Whisper is ready.';
+      statusEl.style.color = 'var(--success)';
+      note.style.display = 'none';
+      mark.innerHTML = '<span style="color:var(--accent);display:flex"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></span>';
       var badge = document.getElementById('whisper-status');
       badge.textContent = 'Ready';
       badge.className = 'badge badge-ok';
-      setTimeout(function() {
-        document.getElementById('whisper-setup').style.display = 'none';
-      }, 1500);
+    }
+
+    document.getElementById('btn-setup-retry').addEventListener('click', function() {
+      runWhisperSetup();
     });
 
     api.onBuildProgress(function(message) {
-      var label = document.getElementById('setup-label');
-      if (label) label.textContent = message;
+      var statusEl = document.getElementById('setup-status');
+      if (statusEl && setupRunning) statusEl.textContent = message;
     });
 
-    api.onDownloadProgress(function(percent) {
-      document.getElementById('setup-fill').style.width = percent + '%';
-      document.getElementById('setup-label').textContent = 'Downloading model... ' + percent + '%';
+    api.onDownloadProgress(function(p) {
+      var obj = p && typeof p === 'object';
+      var percent = obj ? p.percent : p;
+      var downloaded = obj ? p.downloaded : 0;
+      var total = obj ? p.total : 0;
+      var speed = obj ? p.bytesPerSec : 0;
+      var bytesText = total > 0 ? (fmtBytes(downloaded) + ' / ' + fmtBytes(total)) : fmtBytes(downloaded);
+
+      setFill(document.getElementById('setup-fill'), percent);
+      document.getElementById('setup-percent').textContent = percent + '%';
+      document.getElementById('setup-bytes').textContent = bytesText;
+      document.getElementById('setup-speed').textContent = speed > 0 ? (fmtBytes(speed) + '/s') : '';
+
+      // Mirror into the floating pill for when the user has moved on.
+      setFill(document.getElementById('dl-float-fill'), percent);
+      document.getElementById('dl-float-pct').textContent = percent + '%';
+      document.getElementById('dl-float-sub').textContent =
+        bytesText + (speed > 0 ? '  ·  ' + fmtBytes(speed) + '/s' : '');
     });
 
     function saveSTT() {

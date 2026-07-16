@@ -6,6 +6,12 @@
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
+    <!-- Load the koffi FFI native module under hardened runtime. Without this,
+         library validation blocks the third-party .node (and ad-hoc-signed
+         share builds have no Team ID to match), so the in-process Input
+         Monitoring check would fail to load. See src/main/utils/inputMonitoring.ts. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
     <key>com.apple.security.automation.apple-events</key>

@@ -4,7 +4,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// A download-progress tick emitted to the renderer. `total` is 0 when the
+/// server sends no Content-Length; `bytes_per_sec` is a short rolling average.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadProgress {
+    pub percent: u32,
+    pub downloaded: u64,
+    pub total: u64,
+    pub bytes_per_sec: u64,
+}
 
 fn models_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default()
@@ -317,7 +328,7 @@ pub fn list_downloaded_models() -> Vec<String> {
 
 pub async fn download_model(
     model_name: &str,
-    progress_cb: impl Fn(u32) + Send + 'static,
+    progress_cb: impl Fn(DownloadProgress) + Send + 'static,
 ) -> Result<(), String> {
     if !is_valid_model_name(model_name) {
         return Err(format!("Invalid whisper model name: {}", model_name));
@@ -345,26 +356,32 @@ pub async fn download_model(
 
     let total = response.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
-    let mut last_percent: u32 = 0;
 
     let tmp_path = model.with_extension("bin.tmp");
     let mut file = fs::File::create(&tmp_path).map_err(|e| format!("Create file: {}", e))?;
 
     use std::io::Write;
+    // Throttle progress to ~10 ticks/sec and derive a rolling transfer speed
+    // from the bytes moved since the last tick, so the UI can show bytes + MB/s.
+    let mut last_emit = Instant::now();
+    let mut last_bytes: u64 = 0;
+    let percent_of = |done: u64| -> u32 {
+        if total > 0 { ((done * 100) / total).min(100) as u32 } else { 0 }
+    };
     // Stream the body to disk so large models don't buffer in memory and the
     // UI gets incremental download-progress updates.
     while let Some(chunk) = response.chunk().await.map_err(|e| format!("Read failed: {}", e))? {
         file.write_all(&chunk).map_err(|e| format!("Write failed: {}", e))?;
         downloaded += chunk.len() as u64;
-        if total > 0 {
-            let percent = ((downloaded * 100) / total).min(100) as u32;
-            if percent != last_percent {
-                last_percent = percent;
-                progress_cb(percent);
-            }
+        let dt = last_emit.elapsed().as_secs_f64();
+        if dt >= 0.1 {
+            let bytes_per_sec = if dt > 0.0 { ((downloaded - last_bytes) as f64 / dt) as u64 } else { 0 };
+            last_emit = Instant::now();
+            last_bytes = downloaded;
+            progress_cb(DownloadProgress { percent: percent_of(downloaded), downloaded, total, bytes_per_sec });
         }
     }
-    progress_cb(100);
+    progress_cb(DownloadProgress { percent: 100, downloaded, total, bytes_per_sec: 0 });
 
     fs::rename(&tmp_path, &model).map_err(|e| format!("Rename failed: {}", e))?;
     log::info!("[whisper] Model downloaded to {:?} ({} bytes)", model, downloaded);

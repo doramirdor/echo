@@ -1,4 +1,4 @@
-import { clipboard } from 'electron';
+import { clipboard, app, systemPreferences } from 'electron';
 import { execFileSync } from 'child_process';
 import { getBinaryPath } from '../utils/swiftBinary';
 
@@ -240,7 +240,17 @@ export class TextInserter {
   }
 
   static checkPermissions(): { ok: boolean; message: string } {
-    if (insertHelper(['check-ax']) === 'ax-granted') {
+    // Packaged build: the app is a single "Echo" TCC identity, so ask the OS
+    // about THIS process. Spawning the `text-insert` helper instead evaluates
+    // the helper as its own AX subject, which reads "not granted" even when the
+    // "Echo" row the user toggled in System Settings is on (mirrors the
+    // is_packaged() branch of get_status in src-tauri/src/lib.rs). Dev keeps the
+    // helper check: there the helper disclaims to its own identity, and that
+    // grant is what actually gates insertion.
+    const granted = app.isPackaged
+      ? systemPreferences.isTrustedAccessibilityClient(false)
+      : insertHelper(['check-ax']) === 'ax-granted';
+    if (granted) {
       return { ok: true, message: 'Accessibility permissions granted' };
     }
     return {

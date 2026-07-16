@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('echo', {
   // Onboarding
   openAccessibilitySettings: () => ipcRenderer.invoke('open-accessibility-settings'),
   openInputMonitoringSettings: () => ipcRenderer.invoke('open-input-monitoring-settings'),
+  freeFnKey: () => ipcRenderer.invoke('free-fn-key'),
   openMicrophoneSettings: () => ipcRenderer.invoke('open-microphone-settings'),
   openScreenRecordingSettings: () => ipcRenderer.invoke('open-screen-recording-settings'),
   openSpeechRecognitionSettings: () => ipcRenderer.invoke('open-speech-recognition-settings'),
