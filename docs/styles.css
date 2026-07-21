@@ -39,10 +39,10 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; overflow-x: clip; }
 body {
   background: var(--bg); color: var(--text); font-family: var(--font);
-  line-height: 1.6; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x: hidden;
+  line-height: 1.6; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x: clip;
 }
 body::before {
   content: ""; position: fixed; inset: 0; z-index: -1;
@@ -100,7 +100,7 @@ a { color: inherit; text-decoration: none; }
 .nav__actions { display: flex; align-items: center; gap: 14px; }
 .ghlink { display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); font-size: 0.92rem; font-weight: 500; transition: color 0.18s; }
 .ghlink:hover { color: var(--accent); }
-.nav__toggle { display: none; flex-direction: column; gap: 5px; background: none; border: 0; cursor: pointer; padding: 8px; }
+.nav__toggle { display: none; flex-direction: column; align-items: center; justify-content: center; gap: 5px; background: none; border: 0; cursor: pointer; min-width: 44px; min-height: 44px; }
 .nav__toggle span { width: 22px; height: 2px; background: var(--text); border-radius: 2px; }
 
 /* ===== Hero ===== */
