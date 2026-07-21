@@ -33,6 +33,11 @@ your cursor in whatever app was focused.
 It's built for the same job as tools like Wispr Flow and Typeless — but **free,
 fully local, and open source.** No account, no subscription, no cloud required.
 
+<p align="center">
+  <!-- Placeholder poster — replace screenshots/demo.gif with a real screen recording of dictation (⌘⇧5 → record → convert to gif). Same path, no markup change needed. -->
+  <img src="screenshots/demo.gif" alt="Echo dictating refined text into an app" width="760">
+</p>
+
 ## Why Echo
 
 - 🔒 **Private by default** — local Whisper + no LLM means zero network calls. Your voice never leaves your Mac.
