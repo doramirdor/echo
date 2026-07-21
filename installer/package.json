@@ -1,0 +1,11 @@
+{
+  "name": "echo-whisper",
+  "version": "0.2.0",
+  "description": "Installer for Echo — local voice-to-text for macOS. Run: npx echo-whisper",
+  "bin": { "echo-install": "install.js" },
+  "files": ["install.js"],
+  "os": ["darwin"],
+  "license": "MIT",
+  "homepage": "https://doramirdor.github.io/echo/",
+  "repository": { "type": "git", "url": "git+https://github.com/doramirdor/echo.git" }
+}

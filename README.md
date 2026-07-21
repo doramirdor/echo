@@ -84,7 +84,16 @@ are needed to build whisper.cpp — the onboarding wizard handles this automatic
 
 ## Quick start
 
-**Easiest:** download the latest `.dmg` from [Releases](https://github.com/doramirdor/echo/releases/latest),
+**One command** (needs [Node](https://nodejs.org)):
+
+```bash
+npx echo-whisper
+```
+
+Downloads the latest build into `/Applications` and launches it — no Gatekeeper
+right-click needed, since `curl` downloads aren't quarantined.
+
+**Or download the `.dmg`** from [Releases](https://github.com/doramirdor/echo/releases/latest),
 drag Echo to Applications, and launch. The build isn't notarized yet, so on first
 open right-click the app and choose **Open** (or run `xattr -cr /Applications/Echo.app`).
 

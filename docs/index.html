@@ -315,11 +315,12 @@
           <div class="codecard" id="get">
             <div class="codecard__bar"><span class="cc-dot"></span><span class="cc-dot"></span><span class="cc-dot"></span><span class="codecard__title">bash</span></div>
             <button class="copy" id="copyBtn" aria-label="Copy install commands">Copy</button>
-<pre><code id="installCode"><span class="c-muted"># Clone the repository</span>
+<pre><code id="installCode"><span class="c-muted"># Install &amp; launch (needs Node)</span>
+npx echo-whisper
+
+<span class="c-muted"># …or build from source</span>
 git clone https://github.com/doramirdor/echo.git
 cd echo
-
-<span class="c-muted"># Install deps, then launch</span>
 npm install
 npm start
 
