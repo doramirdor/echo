@@ -100,25 +100,38 @@
     }, { threshold: 0.3 }).observe(demo);
   }
 
-  /* ---------- Copy install commands ---------- */
+  /* ---------- Copy to clipboard ---------- */
+  function copyToClipboard(text, ok) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok).catch(function () {});
+    } else {
+      var ta = document.createElement("textarea"); ta.value = text;
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); ok(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+  }
+
   var copyBtn = document.getElementById("copyBtn");
   var code = document.getElementById("installCode");
   if (copyBtn && code) {
     copyBtn.addEventListener("click", function () {
       var text = code.innerText.replace(/^#.*$/gm, "").replace(/✓.*/g, "").trim();
-      var done = function () {
+      copyToClipboard(text, function () {
         copyBtn.textContent = "Copied!";
         copyBtn.classList.add("is-copied");
         setTimeout(function () { copyBtn.textContent = "Copy"; copyBtn.classList.remove("is-copied"); }, 1800);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(function () {});
-      } else {
-        var ta = document.createElement("textarea"); ta.value = text;
-        document.body.appendChild(ta); ta.select();
-        try { document.execCommand("copy"); done(); } catch (e) {}
-        document.body.removeChild(ta);
-      }
+      });
+    });
+  }
+
+  var npxBtn = document.getElementById("npxCopy");
+  if (npxBtn) {
+    npxBtn.addEventListener("click", function () {
+      copyToClipboard("npx echo-whisper", function () {
+        npxBtn.classList.add("is-copied");
+        setTimeout(function () { npxBtn.classList.remove("is-copied"); }, 1600);
+      });
     });
   }
 })();
