@@ -19,9 +19,20 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'echo-'));
 const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
 
 console.log('Downloading the latest Echo…');
-run(`curl -fSL --retry 3 "${TARBALL}" | tar -xz -C "${tmp}"`);
+try {
+  run(`curl -fSL --retry 3 -o "${tmp}/echo.tgz" "${TARBALL}" && tar -xzf "${tmp}/echo.tgz" -C "${tmp}"`);
+} catch {
+  // fall through to the existence check below for a clean message
+}
 
 const src = path.join(tmp, 'Echo.app');
+// Never touch an existing install until the download is on disk and intact:
+// a half-finished download must leave the current Echo.app alone.
+if (!fs.existsSync(src)) {
+  console.error('Download failed — nothing was installed.');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  process.exit(1);
+}
 let dest = '/Applications/Echo.app';
 try {
   run(`rm -rf "${dest}" && ditto "${src}" "${dest}"`);
