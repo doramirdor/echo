@@ -109,6 +109,10 @@
     buildWhisperBinary: () => invoke('build_whisper_binary'),
     checkWhisperBinary: (modelName) => invoke('check_whisper_binary', { modelName: modelName || null }),
     listWhisperModels: () => invoke('list_whisper_models'),
+    downloadParakeetModel: (modelName) => invoke('download_parakeet_model', { modelName: modelName || null }),
+    buildParakeetBinary: () => invoke('build_parakeet_binary'),
+    checkParakeetBinary: (modelName) => invoke('check_parakeet_binary', { modelName: modelName || null }),
+    listParakeetModels: () => invoke('list_parakeet_models'),
     checkCliExists: (command) => invoke('check_cli_exists', { command }),
     onDownloadProgress: (callback) => {
       listen('download-progress', (event) => callback(event.payload));

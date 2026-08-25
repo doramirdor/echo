@@ -83,11 +83,54 @@ pub fn read_recent_logs(max_bytes: usize) -> String {
     match fs::read_to_string(&path) {
         Ok(content) => {
             if content.len() > max_bytes {
-                content[content.len() - max_bytes..].to_string()
+                content[tail_start(&content, max_bytes)..].to_string()
             } else {
                 content
             }
         }
         Err(_) => String::new(),
+    }
+}
+
+/// Byte offset to start the last `max_bytes` of `content` from, snapped forward
+/// to a character boundary. The log is full of multi-byte characters — the em
+/// dash in user-facing error messages, and any non-English dictation echoed by
+/// `[pipeline] RAW:` — so a raw `len - max_bytes` offset can land mid-character
+/// and panic the slice, taking out "Copy debug logs" exactly when someone is
+/// trying to report a bug.
+fn tail_start(content: &str, max_bytes: usize) -> usize {
+    let mut start = content.len().saturating_sub(max_bytes);
+    while start < content.len() && !content.is_char_boundary(start) {
+        start += 1;
+    }
+    start
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tail_start;
+
+    #[test]
+    fn tail_start_snaps_off_a_multibyte_character() {
+        // "—" is 3 bytes; cutting at 1 or 2 bytes into it must move forward to
+        // the next boundary rather than produce a panicking offset.
+        let s = "ab—cd";
+        assert_eq!(s.len(), 7);
+        for max in 1..=s.len() {
+            let start = tail_start(s, max);
+            assert!(s.is_char_boundary(start), "offset {} splits a character", start);
+            // Never drops more than the requested tail's worth of content.
+            assert!(start <= s.len());
+            let _ = &s[start..]; // would panic on a bad boundary
+        }
+    }
+
+    #[test]
+    fn tail_start_is_exact_on_ascii() {
+        let s = "0123456789";
+        assert_eq!(tail_start(s, 4), 6);
+        assert_eq!(&s[tail_start(s, 4)..], "6789");
+        // Asking for more than there is keeps the whole string.
+        assert_eq!(tail_start(s, 100), 0);
     }
 }

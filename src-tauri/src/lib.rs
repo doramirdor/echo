@@ -571,6 +571,54 @@ fn list_whisper_models() -> Result<serde_json::Value, String> {
     Ok(serde_json::to_value(models).unwrap_or_default())
 }
 
+// Parakeet mirrors the whisper commands above. It reuses the 'download-progress'
+// / 'build-progress' events — only one local engine's section is ever visible.
+
+#[tauri::command]
+async fn download_parakeet_model(app: AppHandle, model_name: Option<String>, state: tauri::State<'_, EchoApp>) -> Result<serde_json::Value, String> {
+    let name = model_name.unwrap_or_else(|| state.settings.get(|s| s.parakeet_model_name.clone()));
+    let app2 = app.clone();
+    match transcription::parakeet::download_model(&name, move |progress| {
+        let _ = app2.emit("download-progress", progress);
+    }).await {
+        Ok(()) => Ok(serde_json::json!({ "success": true })),
+        Err(e) => Ok(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+#[tauri::command]
+async fn build_parakeet_binary(app: AppHandle) -> Result<serde_json::Value, String> {
+    let app2 = app.clone();
+    match transcription::parakeet::build_binary(move |msg| {
+        log::info!("[build] {}", msg);
+        let _ = app2.emit("build-progress", msg);
+    }).await {
+        Ok(()) => Ok(serde_json::json!({ "success": true })),
+        Err(e) => Ok(serde_json::json!({ "success": false, "error": e })),
+    }
+}
+
+#[tauri::command]
+async fn check_parakeet_binary(model_name: Option<String>, state: tauri::State<'_, EchoApp>) -> Result<serde_json::Value, String> {
+    let name = model_name.unwrap_or_else(|| state.settings.get(|s| s.parakeet_model_name.clone()));
+    let (binary, model) = transcription::parakeet::is_ready(&name);
+    Ok(serde_json::json!({ "binary": binary, "model": model }))
+}
+
+#[tauri::command]
+fn list_parakeet_models() -> Result<serde_json::Value, String> {
+    let downloaded = transcription::parakeet::list_downloaded_models();
+    let models: Vec<serde_json::Value> = transcription::parakeet::PARAKEET_MODELS.iter().map(|m| {
+        serde_json::json!({
+            "name": m.name,
+            "label": m.label,
+            "size": m.size,
+            "downloaded": downloaded.contains(&m.name.to_string()),
+        })
+    }).collect();
+    Ok(serde_json::to_value(models).unwrap_or_default())
+}
+
 #[tauri::command]
 fn check_cli_exists(command: String) -> Result<bool, String> {
     // The name crosses the IPC boundary — only accept bare tool names
@@ -1190,6 +1238,10 @@ async fn run_pipeline(
     // and the denoised intermediate) whether the pipeline succeeds or fails.
     let mut raw_wav: Option<std::path::PathBuf> = None;
     let mut clean_wav: Option<std::path::PathBuf> = None;
+    // How long the user actually spoke. Set once the WAV exists, and logged with
+    // the run so the Insights tab can compute words-per-minute against speaking
+    // time rather than against pipeline latency.
+    let mut speech_ms: Option<u64> = None;
 
     let result: Result<(), String> = async {
         app_state.set_state(EchoState::Transcribing, None).await;
@@ -1205,6 +1257,10 @@ async fn run_pipeline(
         if wav_bytes <= 44 {
             return Err("No audio captured — grant Microphone access to Echo in System Settings > Privacy & Security > Microphone.".into());
         }
+        // The recorder always writes 16 kHz mono 16-bit PCM (see
+        // AudioRecorder::write_wav), i.e. 32000 bytes per second after the
+        // 44-byte header.
+        speech_ms = Some((wav_bytes - 44) * 1000 / 32_000);
 
         // The sox passes (noise reduction / gain) only feed the engines that
         // consume the cleaned file — local whisper and macOS Speech transcribe the
@@ -1346,7 +1402,15 @@ async fn run_pipeline(
                 use tauri_plugin_notification::NotificationExt;
                 let _ = app.notification().builder().title("Echo").body("No speech detected").show();
             }
-            run_log.add(raw_text.clone(), String::new(), String::new(), source_app.clone(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
+            run_log.add(history::run_log::NewRun {
+                raw: raw_text.clone(),
+                source_app: source_app.clone(),
+                stt_engine: engine_used.clone(),
+                llm_provider: llm_provider.clone(),
+                duration_ms: pipeline_start.elapsed().as_millis() as u64,
+                speech_ms,
+                ..Default::default()
+            });
             app_state.set_state(EchoState::Idle, None).await;
             let _ = app.emit("state-change", ("idle", serde_json::json!({})));
             return Ok(());
@@ -1581,13 +1645,24 @@ async fn run_pipeline(
             edit_learner.record_insertion(&inserted_final, &before_anchor, &after_anchor);
         }
 
+        // Log the run BEFORE announcing idle: the settings window refreshes its
+        // History/Insights tabs off this event, so emitting first would race the
+        // write and show the run as missing until the next refresh.
+        run_log.add(history::run_log::NewRun {
+            raw: raw_text.clone(),
+            refined: refined_text.clone(),
+            source_app: source_app.clone(),
+            stt_engine: engine_used.clone(),
+            llm_provider: llm_provider.clone(),
+            duration_ms: pipeline_start.elapsed().as_millis() as u64,
+            speech_ms,
+            ..Default::default()
+        });
+
         let _ = app.emit("state-change", ("idle", serde_json::json!({
             "lastResult": truncate_chars(&refined_text, 60),
             "rawResult": raw_text,
         })));
-
-        // Log run
-        run_log.add(raw_text, refined_text.clone(), String::new(), source_app.clone(), engine_used.clone(), llm_provider.clone(), pipeline_start.elapsed().as_millis() as u64, None);
 
         // Vocabulary learning
         memory::vocabulary::analyze_and_learn(memory, &cleaned, &refined_text);
@@ -1621,7 +1696,6 @@ async fn run_pipeline(
         // Nothing reliably landed — don't let undo delete unrelated text.
         app_state.clear_last_insertion().await;
         app_state.set_state(EchoState::Error, Some(msg.clone())).await;
-        let _ = app.emit("state-change", ("error", serde_json::json!({ "error": msg })));
 
         use tauri_plugin_notification::NotificationExt;
         let body = match &saved_path {
@@ -1635,9 +1709,21 @@ async fn run_pipeline(
 
         let logged_error = match &saved_path {
             Some(p) => format!("{} (recording saved to {})", msg, p.to_string_lossy()),
-            None => msg,
+            None => msg.clone(),
         };
-        run_log.add(String::new(), String::new(), String::new(), source_app.clone(), stt_engine, llm_provider, pipeline_start.elapsed().as_millis() as u64, Some(logged_error));
+        // Logged before the event is emitted, for the same reason as the success
+        // path: the settings window reloads its History tab off state-change.
+        run_log.add(history::run_log::NewRun {
+            source_app: source_app.clone(),
+            stt_engine,
+            llm_provider,
+            duration_ms: pipeline_start.elapsed().as_millis() as u64,
+            speech_ms,
+            error: Some(logged_error),
+            ..Default::default()
+        });
+
+        let _ = app.emit("state-change", ("error", serde_json::json!({ "error": msg })));
 
         let state = app_state.clone();
         tokio::spawn(async move {
@@ -1931,6 +2017,7 @@ fn build_tray_menu(
     let stt_defs = [
         ("groq", "Groq Cloud (Whisper Large V3)"),
         ("whisper", "Local Whisper.cpp"),
+        ("parakeet", "Local Parakeet.cpp"),
         ("macos", "macOS Native"),
         ("deepgram", "Deepgram"),
         ("openai-whisper", "OpenAI Whisper API"),
@@ -2145,6 +2232,8 @@ pub fn run() {
             complete_onboarding,
             download_whisper_model, build_whisper_binary,
             check_whisper_binary, list_whisper_models,
+            download_parakeet_model, build_parakeet_binary,
+            check_parakeet_binary, list_parakeet_models,
             check_cli_exists, list_audio_devices,
             check_prompt_staleness,
             get_run_log, clear_run_log, search_run_log,
@@ -2242,12 +2331,14 @@ pub fn run() {
                                 handle_fn_stray_resolve(&app_handle, &echo, gen, &mut gesture).await;
                             }
                             Some(input_monitoring) = dead_rx.recv() => {
-                                // The monitor exhausted its restart budget — the
-                                // primary hotkey is gone until it recovers, so say
-                                // so instead of failing silently.
+                                // The fn hotkey isn't working: either Input Monitoring
+                                // is denied (the tap is created but deaf — nothing else
+                                // would ever report it), or the monitor exhausted its
+                                // restart budget. Either way, say so instead of leaving
+                                // the primary trigger silently dead.
                                 let hotkey = app_handle.state::<EchoApp>().settings.get(|s| s.hotkey.clone());
                                 let body = if input_monitoring == "denied" {
-                                    "fn hotkey stopped — grant Input Monitoring in System Settings > Privacy & Security, then restart Echo.".to_string()
+                                    format!("fn hotkey inactive — grant Echo Input Monitoring in System Settings > Privacy & Security, then restart Echo. Use {} meanwhile.", hotkey)
                                 } else {
                                     format!("fn hotkey stopped working — use {} or restart Echo.", hotkey)
                                 };

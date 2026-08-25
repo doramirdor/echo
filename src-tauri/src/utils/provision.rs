@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 
 // First-run provisioning for packaged builds.
 //
-// A shareable .app bundles prebuilt native helpers + `whisper-cli` under
-// `Contents/Resources/bin` (staged by scripts/package-mac.sh). On first launch
-// we copy those into `~/Library/Application Support/echo/bin` — the exact paths
-// the app already reads — so a fresh Mac needs no Xcode tools, Homebrew, or
-// git/cmake to start. The Whisper MODEL is NOT bundled (it's ~142MB); it's
-// downloaded once from onboarding, so first run needs a network connection. In a
-// dev build there is no bundle, so this is a no-op and the app falls back to
+// A shareable .app bundles prebuilt native helpers + `whisper-cli` +
+// `parakeet-cli` under `Contents/Resources/bin` (staged by
+// scripts/package-mac.sh). On first launch we copy those into
+// `~/Library/Application Support/echo/bin` — the exact paths the app already
+// reads — so a fresh Mac needs no Xcode tools, Homebrew, or git/cmake to start.
+// The MODELS are NOT bundled (Whisper's is ~142MB, Parakeet's ~900MB); they're
+// downloaded on demand, so first run needs a network connection. In a dev build
+// there is no bundle, so this is a no-op and the app falls back to
 // compiling/downloading. The `models/` seeding below is defensive: it stays a
 // no-op unless a future build chooses to bundle a model again.
 

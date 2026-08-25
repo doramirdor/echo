@@ -42,3 +42,21 @@ pub async fn refine(api_key: &str, model: &str, raw: &str, system_prompt: &str) 
     log::info!("[gemini] Refined: \"{}\"", text);
     Ok(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mirrors newRefiners.test.ts `GeminiRefiner > throws without an API key`.
+    // The empty-key guard returns before any network call. The `calls
+    // generateContent and parses candidate parts` test is a fetch round-trip
+    // (URL/header/response-parse are inline in the async path) with no pure
+    // Rust seam, so it's skipped.
+    #[tokio::test]
+    async fn refine_errors_when_api_key_missing() {
+        let err = refine("", "gemini-2.0-flash", "hi there", "sys")
+            .await
+            .unwrap_err();
+        assert!(err.contains("Gemini API key"), "unexpected error: {}", err);
+    }
+}

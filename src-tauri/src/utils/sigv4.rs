@@ -132,4 +132,37 @@ mod tests {
              Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
         );
     }
+
+    #[test]
+    fn includes_signed_content_type_in_signed_headers_sorted() {
+        // Mirrors the TS "includes signed extra headers in SignedHeaders, sorted"
+        // case. The Rust seam signs an extra header via `content_type`, so the
+        // ported vector uses Content-Type: application/json on a Bedrock POST.
+        let headers = sign_request(&SigV4Request {
+            method: "POST",
+            host: "bedrock-runtime.us-east-1.amazonaws.com",
+            path: "/model/anthropic.claude-3-5-haiku-20241022-v1:0/invoke",
+            region: "us-east-1",
+            service: "bedrock",
+            body: "{}",
+            access_key_id: "AKIDEXAMPLE",
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            content_type: Some("application/json"),
+            amz_date: Some("20150830T123600Z"),
+        });
+
+        let auth = headers
+            .iter()
+            .find(|(k, _)| k == "Authorization")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert!(auth.contains("SignedHeaders=content-type;host;x-amz-date"));
+
+        let content_type = headers
+            .iter()
+            .find(|(k, _)| k == "Content-Type")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert_eq!(content_type, "application/json");
+    }
 }

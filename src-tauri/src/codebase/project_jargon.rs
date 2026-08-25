@@ -282,4 +282,95 @@ mod tests {
         assert_eq!(strip_scope("@tauri-apps/api"), "api");
         assert_eq!(strip_scope("react"), "react");
     }
+
+    // Integration tests over a real temp project — mirrors the fixture built in
+    // tests/projectJargon.test.ts (`beforeAll`).
+    fn make_project(label: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "echo-jargon-test-{}-{}-{}",
+            std::process::id(),
+            label,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&base).unwrap();
+        fs::write(
+            base.join("package.json"),
+            r#"{"name":"@acme/rocket-widget","dependencies":{"react":"^18","@tanstack/query-core":"^5"},"devDependencies":{"vitest":"^3"}}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(base.join("src")).unwrap();
+        fs::write(
+            base.join("src").join("speechBias.ts"),
+            "export function buildSpeechBiasPrompt() {}\nexport const MAX_TOKENS = 224;\nclass GroqTranscriber {}\n",
+        )
+        .unwrap();
+        fs::write(
+            base.join("src").join("analyzer.py"),
+            "def analyze_codebase():\n    pass\n",
+        )
+        .unwrap();
+        fs::create_dir_all(base.join("node_modules").join("leftpad")).unwrap();
+        fs::write(
+            base.join("node_modules").join("leftpad").join("index.js"),
+            "export function shouldNotAppear() {}\n",
+        )
+        .unwrap();
+        base
+    }
+
+    fn has(terms: &[String], term: &str) -> bool {
+        terms.iter().any(|t| t == term)
+    }
+
+    #[test]
+    fn extracts_dependency_names_from_manifest_scope_stripped() {
+        let dir = make_project("deps");
+        let terms = extract_project_jargon(dir.to_str().unwrap());
+        assert!(has(&terms, "react"));
+        assert!(has(&terms, "vitest"));
+        assert!(has(&terms, "query-core")); // @tanstack/query-core -> query-core
+        assert!(has(&terms, "rocket-widget")); // @acme/rocket-widget -> rocket-widget
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn extracts_exported_symbols_and_technical_file_names() {
+        let dir = make_project("symbols");
+        let terms = extract_project_jargon(dir.to_str().unwrap());
+        assert!(has(&terms, "buildSpeechBiasPrompt"));
+        assert!(has(&terms, "MAX_TOKENS"));
+        assert!(has(&terms, "GroqTranscriber"));
+        assert!(has(&terms, "speechBias")); // filename base (camelCase)
+        assert!(has(&terms, "analyze_codebase")); // python def
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn skips_node_modules_and_ignored_dirs() {
+        let dir = make_project("skip");
+        let terms = extract_project_jargon(dir.to_str().unwrap());
+        assert!(!has(&terms, "shouldNotAppear"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn deduplicates_case_insensitively() {
+        // The term-cap half of the TS test has no Rust seam (max_terms is
+        // hardcoded, not a parameter), but the case-insensitive dedup contract
+        // is reproducible on any extraction.
+        let dir = make_project("dedup");
+        let terms = extract_project_jargon(dir.to_str().unwrap());
+        let lowered: HashSet<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+        assert_eq!(lowered.len(), terms.len());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn returns_empty_list_for_nonexistent_path() {
+        let missing = std::env::temp_dir().join("echo-jargon-does-not-exist-xyz-987");
+        assert!(extract_project_jargon(missing.to_str().unwrap()).is_empty());
+    }
 }

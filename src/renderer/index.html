@@ -1389,6 +1389,7 @@
             <label>Engine</label>
             <select id="sttEngine">
               <option value="whisper">Whisper — on-device, free (recommended)</option>
+              <option value="parakeet">Parakeet — on-device, free, faster</option>
               <option value="macos">macOS Speech Recognition — on-device</option>
               <option value="groq">Groq — cloud</option>
               <option value="deepgram">Deepgram — cloud</option>
@@ -1411,6 +1412,32 @@
               </div>
               <div id="model-download-status" class="validation-status"></div>
             </div>
+          </div>
+
+          <div id="parakeet-model-section" data-stt-fields="parakeet" style="display:none">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <label style="margin:0;font-size:13px">Parakeet Binary</label>
+              <span id="parakeet-binary-badge" class="status">Checking...</span>
+              <button class="btn-secondary" id="build-parakeet-btn" style="display:none;font-size:11px;padding:4px 10px">Build</button>
+            </div>
+            <div id="parakeet-build-status" style="font-size:12px;color:var(--text-muted);margin-bottom:10px;display:none"></div>
+            <div class="form-group">
+              <label>Parakeet Model</label>
+              <div class="input-group">
+                <select id="parakeetModelName"></select>
+                <button class="btn-primary" id="download-parakeet-btn" style="display:none">Download</button>
+              </div>
+              <div id="parakeet-download-status" class="validation-status"></div>
+            </div>
+            <p class="card-description">
+              NVIDIA Parakeet running on-device via parakeet.cpp. Faster and more accurate than
+              Whisper on English, and the v3 models cover 25 European languages plus Japanese.
+              <br /><br />
+              <strong>Trade-off:</strong> Parakeet accepts no initial prompt, so your Vocabulary
+              and learned project jargon cannot steer recognition the way they do for Whisper.
+              Names and domain terms get corrected afterward by the refiner instead, which needs
+              an LLM provider set. If jargon accuracy matters more than raw speed, stay on Whisper.
+            </p>
           </div>
 
           <p class="card-description" data-stt-fields="macos" style="display:none">Uses macOS's built-in on-device Speech Recognition. Grant the <strong>Speech Recognition</strong> permission on the General tab. No API key needed.</p>

@@ -126,3 +126,89 @@ pub fn build_speech_bias_prompt(
     }
     prompt
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mirrors the `entry(term)` helper in `tests/speechBias.test.ts`.
+    fn entry(term: &str) -> MemoryEntry {
+        MemoryEntry {
+            id: term.to_string(),
+            term: term.to_string(),
+            context: String::new(),
+            misrecognitions: vec![],
+            category: "technicalTerm".to_string(),
+            use_count: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    // --- extract_identifiers ---
+
+    #[test]
+    fn finds_camel_case_pascal_case_snake_case_acronyms_and_dotted_names() {
+        let ids = extract_identifiers(
+            "We use runPipeline, EchoState, run_log, the API, and config.json here.",
+        );
+        assert!(ids.contains(&"runPipeline".to_string()));
+        assert!(ids.contains(&"EchoState".to_string()));
+        assert!(ids.contains(&"run_log".to_string()));
+        assert!(ids.contains(&"API".to_string()));
+        assert!(ids.contains(&"config.json".to_string()));
+    }
+
+    #[test]
+    fn skips_plain_english_words() {
+        let ids = extract_identifiers("the quick brown fox jumps over the lazy dog");
+        assert_eq!(ids.len(), 0);
+    }
+
+    #[test]
+    fn captures_quoted_backticked_tokens() {
+        let ids = extract_identifiers("Call `transcribe` then \"GroqTranscriber\".");
+        assert!(ids.contains(&"transcribe".to_string()));
+        assert!(ids.contains(&"GroqTranscriber".to_string()));
+    }
+
+    // --- build_speech_bias_prompt ---
+
+    #[test]
+    fn returns_empty_string_with_no_input() {
+        assert_eq!(build_speech_bias_prompt("", &[], &[], None), "");
+    }
+
+    #[test]
+    fn includes_vocabulary_memory_terms_and_project_jargon() {
+        let prompt = build_speech_bias_prompt(
+            "Kubernetes\nGraphQL",
+            &[entry("Anthropic")],
+            &[],
+            Some("The runPipeline function calls GroqTranscriber."),
+        );
+        assert!(prompt.contains("Kubernetes"));
+        assert!(prompt.contains("GraphQL"));
+        assert!(prompt.contains("Anthropic"));
+        assert!(prompt.contains("runPipeline"));
+        assert!(prompt.starts_with("Vocabulary:"));
+    }
+
+    #[test]
+    fn deduplicates_terms_case_insensitively() {
+        let prompt = build_speech_bias_prompt("Echo", &[entry("echo")], &[], None);
+        // "Echo" appears once after "Vocabulary: "
+        let matches = prompt.to_lowercase().matches("echo").count();
+        assert_eq!(matches, 1);
+    }
+
+    #[test]
+    fn caps_length_to_the_token_window() {
+        let many: String = (0..500)
+            .map(|i| format!("term_{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let prompt = build_speech_bias_prompt(&many, &[], &[], None);
+        assert!(prompt.len() <= 901);
+    }
+}

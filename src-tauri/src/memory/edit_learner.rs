@@ -26,9 +26,15 @@ const MAX_SPAN_WORDS: usize = 6; // ignore edits longer than this on either side
 const MIN_SIMILARITY: f64 = 0.4; // below this the edit replaced too much to be a targeted correction
 
 fn corrections_path() -> PathBuf {
-    let dir = dirs::home_dir()
-        .unwrap_or_default()
-        .join("Library/Application Support/echo");
+    // ECHO_SUPPORT_DIR overrides the support directory. The unit tests set it to a
+    // temp dir so `save()` never overwrites the user's real edit-corrections.json;
+    // it's also a handy escape hatch for a portable/relocated install.
+    let dir = match std::env::var("ECHO_SUPPORT_DIR") {
+        Ok(d) if !d.is_empty() => PathBuf::from(d),
+        _ => dirs::home_dir()
+            .unwrap_or_default()
+            .join("Library/Application Support/echo"),
+    };
     fs::create_dir_all(&dir).ok();
     dir.join("edit-corrections.json")
 }
@@ -339,10 +345,7 @@ mod tests {
 
     #[test]
     fn learns_after_threshold() {
-        let learner = EditLearner {
-            corrections: Arc::new(Mutex::new(vec![])),
-            pending: Arc::new(Mutex::new(None)),
-        };
+        let learner = empty_learner();
         // First correction: recorded but not yet trusted.
         learner.record_insertion("call the cloud", "", "");
         learner.learn_from_field("call the Claude", "");
@@ -351,5 +354,130 @@ mod tests {
         learner.record_insertion("call the cloud", "", "");
         learner.learn_from_field("call the Claude", "");
         assert_eq!(learner.format_for_prompt(), "- \"cloud\" → \"Claude\"");
+    }
+
+    /// Redirect the support dir to a per-binary temp dir the first time any test
+    /// runs, so `save()` (reached via record_insertion/learn_from_field) never
+    /// clobbers the user's real edit-corrections.json. Set once and left set for
+    /// the whole test binary, which is safe under parallel test threads.
+    fn redirect_support_dir() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let dir = std::env::temp_dir().join("echo-edit-learner-tests");
+            let _ = fs::create_dir_all(&dir);
+            std::env::set_var("ECHO_SUPPORT_DIR", &dir);
+            // Start from a clean slate so a stale file from a prior run can't leak in.
+            let _ = fs::remove_file(dir.join("edit-corrections.json"));
+        });
+    }
+
+    /// A learner with an empty in-memory store, bypassing `load_from_disk` so the
+    /// test doesn't pick up the user's real edit-corrections.json. (Mirrors the
+    /// `fs`-mock the TypeScript suite installs.)
+    fn empty_learner() -> EditLearner {
+        redirect_support_dir();
+        EditLearner {
+            corrections: Arc::new(Mutex::new(vec![])),
+            pending: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    #[test]
+    fn extracts_multi_word_substitution() {
+        let subs = extract_substitutions("meet on monday please", "meet on tuesday morning please");
+        assert_eq!(subs, vec![("monday".to_string(), "tuesday morning".to_string())]);
+    }
+
+    #[test]
+    fn ignores_pure_insertions_and_deletions() {
+        // Appended a clause — no substitution span (both-sided), so nothing to learn.
+        assert!(extract_substitutions("call me later", "call me later today please").is_empty());
+        // Removed a word — likewise.
+        assert!(extract_substitutions("call me later today", "call me later").is_empty());
+    }
+
+    #[test]
+    fn captures_multiple_substitutions() {
+        let subs = extract_substitutions("the cat sat on the mat", "the dog sat on the rug");
+        assert_eq!(
+            subs,
+            vec![
+                ("cat".to_string(), "dog".to_string()),
+                ("mat".to_string(), "rug".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn relocates_edit_using_surrounding_field_text() {
+        let learner = empty_learner();
+        let before = "Hey team, ";
+        let after = " by friday.";
+        for _ in 0..2 {
+            learner.record_insertion("ship the featur", before, after);
+            // The user's field now reads before + edited + after.
+            learner.learn_from_field(&format!("{}{}", before, "ship the feature"), after);
+        }
+        assert_eq!(learner.format_for_prompt(), "- \"featur\" → \"feature\"");
+    }
+
+    #[test]
+    fn does_not_learn_when_surroundings_change() {
+        let learner = empty_learner();
+        for _ in 0..2 {
+            learner.record_insertion("call the cloud", "A ", "");
+            // Prefix "A " is missing from the field now — can't re-locate, so bail.
+            learner.learn_from_field("B call the Claude", "");
+        }
+        assert_eq!(learner.format_for_prompt(), "");
+    }
+
+    #[test]
+    fn ignores_untouched_insertion() {
+        let learner = empty_learner();
+        for _ in 0..2 {
+            learner.record_insertion("perfect as is", "", "");
+            learner.learn_from_field("perfect as is", "");
+        }
+        assert_eq!(learner.format_for_prompt(), "");
+        assert_eq!(learner.corrections.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn consumes_pending_snapshot() {
+        let learner = empty_learner();
+        learner.record_insertion("call the cloud", "", "");
+        learner.learn_from_field("call the Claude", "");
+        // No new record_insertion: the pending snapshot is already spent, so a
+        // second read cannot double-learn.
+        learner.learn_from_field("call the Claude", "");
+        let list = learner.corrections.lock().unwrap();
+        let entry = list.iter().find(|c| c.from.to_lowercase() == "cloud");
+        assert_eq!(entry.map(|c| c.count), Some(1));
+    }
+
+    #[test]
+    fn drops_forward_rule_when_reversed() {
+        let learner = empty_learner();
+        for _ in 0..2 {
+            learner.record_insertion("call the cloud", "", "");
+            learner.learn_from_field("call the Claude", "");
+        }
+        assert_eq!(learner.format_for_prompt(), "- \"cloud\" → \"Claude\"");
+
+        // User changes their mind and edits "Claude" back to "cloud".
+        learner.record_insertion("ping the Claude", "", "");
+        learner.learn_from_field("ping the cloud", "");
+        assert_eq!(learner.format_for_prompt(), "");
+    }
+
+    #[test]
+    fn ignores_punctuation_and_casing_edits() {
+        let learner = empty_learner();
+        for _ in 0..2 {
+            learner.record_insertion("hello world", "", "");
+            learner.learn_from_field("hello world.", "");
+        }
+        assert_eq!(learner.corrections.lock().unwrap().len(), 0);
     }
 }

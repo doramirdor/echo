@@ -51,3 +51,20 @@ pub async fn refine(api_key: &str, model: &str, raw: &str, system_prompt: &str) 
     log::info!("[groq-llm] Refined: \"{}\"", text);
     Ok(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mirrors groqRefiner.test.ts `throws when no API key is configured`.
+    // The empty-key guard returns before any network call, so this exercises
+    // the only pure seam here (the request build / response parse are inline in
+    // the async HTTP path and have no fetch-mock equivalent in Rust — skipped).
+    #[tokio::test]
+    async fn refine_errors_when_api_key_missing() {
+        let err = refine("", "llama-3.1-8b-instant", "hello world", "sys")
+            .await
+            .unwrap_err();
+        assert!(err.contains("Groq API key"), "unexpected error: {}", err);
+    }
+}

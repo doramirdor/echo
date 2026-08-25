@@ -39,3 +39,30 @@ pub fn to_user_facing_error(err: &str) -> String {
 
     if err.len() > 200 { format!("{}...", &err[..200]) } else { err.to_string() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mirrors tests/errors.test.ts. The TS side wraps input in `new Error(...)`
+    // and extracts `.message`; the Rust API takes the message string directly.
+    #[test]
+    fn maps_audio_recorder_errors() {
+        assert!(to_user_facing_error("rec: command not found").contains("Audio recording"));
+    }
+
+    #[test]
+    fn maps_whisper_errors() {
+        assert!(to_user_facing_error("Whisper binary not found").contains("Whisper"));
+    }
+
+    #[test]
+    fn maps_accessibility_errors() {
+        assert!(to_user_facing_error("Not authorized assistive").contains("Accessibility"));
+    }
+
+    #[test]
+    fn passes_through_short_unknown_errors() {
+        assert_eq!(to_user_facing_error("Something went wrong"), "Something went wrong");
+    }
+}

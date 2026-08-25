@@ -157,4 +157,56 @@ mod tests {
     fn no_double_space() {
         assert_eq!(join_continuation("hello ", "world"), "world");
     }
+
+    #[test]
+    fn is_mid_sentence_false_for_empty() {
+        assert!(!is_mid_sentence(""));
+        assert!(!is_mid_sentence("   "));
+    }
+
+    #[test]
+    fn is_mid_sentence_true_when_ends_mid_sentence() {
+        assert!(is_mid_sentence("I went to the"));
+        assert!(is_mid_sentence("the quick brown "));
+    }
+
+    #[test]
+    fn is_mid_sentence_false_after_sentence_end() {
+        assert!(!is_mid_sentence("Hello world."));
+        assert!(!is_mid_sentence("Really?"));
+        assert!(!is_mid_sentence("Stop!"));
+        assert!(!is_mid_sentence("Note: "));
+    }
+
+    #[test]
+    fn needs_leading_space_between_two_words() {
+        assert!(needs_leading_space("hello", "world"));
+    }
+
+    #[test]
+    fn needs_leading_space_no_double_whitespace() {
+        assert!(!needs_leading_space("hello ", "world"));
+    }
+
+    #[test]
+    fn needs_leading_space_after_opener() {
+        assert!(!needs_leading_space("(", "x"));
+        assert!(!needs_leading_space("\"", "x"));
+    }
+
+    #[test]
+    fn needs_leading_space_before_clinging_punctuation() {
+        assert!(!needs_leading_space("hello", ", world"));
+        assert!(!needs_leading_space("hello", "."));
+    }
+
+    #[test]
+    fn needs_leading_space_false_without_preceding_text() {
+        assert!(!needs_leading_space("", "world"));
+    }
+
+    #[test]
+    fn join_continuation_unchanged_without_preceding_text() {
+        assert_eq!(join_continuation("", "Hello world"), "Hello world");
+    }
 }

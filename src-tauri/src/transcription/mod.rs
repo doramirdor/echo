@@ -1,4 +1,5 @@
 pub mod whisper;
+pub mod parakeet;
 pub mod groq;
 pub mod deepgram;
 pub mod openai_whisper;
@@ -129,6 +130,14 @@ pub async fn transcribe_audio(
             let model = settings.get(|s| s.openai_whisper_model.clone());
             openai_whisper::transcribe_with_confidence(&key, &model, clean_path, &lang, bias_prompt).await
         }
+        "parakeet" => {
+            // Local parakeet.cpp. Reads the raw WAV like whisper does. Takes no
+            // initial prompt, so `bias_prompt` can't steer decoding here — it's
+            // passed only so the engine can warn once that biasing is inactive.
+            let model_name = settings.get(|s| s.parakeet_model_name.clone());
+            let text = parakeet::transcribe(wav_path, &model_name, &lang, bias_prompt)?;
+            Ok(TranscriptionResult { text, segments: vec![] })
+        }
         _ => {
             // Local whisper.cpp (default, free). Bias decoding toward jargon and
             // honor the configured language for accent handling.
@@ -141,5 +150,30 @@ pub async fn transcribe_audio(
             };
             Ok(TranscriptionResult { text, segments: vec![] })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Ported from tests/transcribeFallback.test.ts describe('isRetryableSttError').
+    // Only the pure-function tests port; the transcribeWithFallback flow tests use
+    // dependency-injected mock transcribers, which the Rust impl doesn't support.
+
+    #[test]
+    fn treats_auth_and_setup_errors_as_non_retryable() {
+        assert_eq!(is_retryable_stt_error("HTTP 401 Unauthorized"), false);
+        assert_eq!(is_retryable_stt_error("403 Forbidden"), false);
+        assert_eq!(is_retryable_stt_error("Invalid API key"), false);
+        assert_eq!(is_retryable_stt_error("whisper binary not found"), false);
+        assert_eq!(is_retryable_stt_error("Whisper is not ready"), false);
+    }
+
+    #[test]
+    fn treats_transient_network_errors_as_retryable() {
+        assert_eq!(is_retryable_stt_error("network timeout"), true);
+        assert_eq!(is_retryable_stt_error("ECONNRESET"), true);
+        assert_eq!(is_retryable_stt_error("500 Internal Server Error"), true);
     }
 }

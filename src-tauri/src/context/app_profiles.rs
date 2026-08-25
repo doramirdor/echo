@@ -85,4 +85,74 @@ mod tests {
         assert!(p.to_lowercase().contains("verbatim"));
         assert!(p.to_lowercase().contains("do not answer"));
     }
+
+    #[test]
+    fn detects_coding_profile_for_vs_code() {
+        let o = no_overrides();
+        assert_eq!(detect_app_profile(Some("Visual Studio Code"), &o), "coding");
+    }
+
+    #[test]
+    fn detects_chat_profile_for_slack() {
+        let o = no_overrides();
+        assert_eq!(detect_app_profile(Some("Slack"), &o), "chat");
+    }
+
+    #[test]
+    fn detects_prose_profile_for_notion() {
+        let o = no_overrides();
+        assert_eq!(detect_app_profile(Some("Notion"), &o), "prose");
+    }
+
+    #[test]
+    fn returns_default_for_unknown_apps() {
+        let o = no_overrides();
+        assert_eq!(detect_app_profile(Some("Unknown App"), &o), "default");
+    }
+
+    #[test]
+    fn returns_empty_prompt_for_default_profile() {
+        let o = no_overrides();
+        assert_eq!(get_profile_prompt(Some("Unknown App"), &o), "");
+    }
+
+    #[test]
+    fn returns_coding_prompt_for_cursor() {
+        let o = no_overrides();
+        let prompt = get_profile_prompt(Some("Cursor"), &o);
+        assert!(prompt.contains("code editor"));
+    }
+
+    #[test]
+    fn detects_shell_profile_for_terminals() {
+        let o = no_overrides();
+        assert_eq!(detect_app_profile(Some("Terminal"), &o), "shell");
+        assert_eq!(detect_app_profile(Some("iTerm2"), &o), "shell");
+        assert_eq!(detect_app_profile(Some("Warp"), &o), "shell");
+    }
+
+    #[test]
+    fn returns_shell_prompt_preserving_command_syntax() {
+        let o = no_overrides();
+        let prompt = get_profile_prompt(Some("Terminal"), &o);
+        assert!(prompt.to_lowercase().contains("terminal"));
+        assert!(prompt.to_lowercase().contains("command syntax"));
+    }
+
+    #[test]
+    fn detects_email_profile_for_mail_clients() {
+        let o = no_overrides();
+        assert_eq!(detect_app_profile(Some("Mail"), &o), "email");
+        assert_eq!(detect_app_profile(Some("Microsoft Outlook"), &o), "email");
+        assert_eq!(detect_app_profile(Some("Superhuman"), &o), "email");
+    }
+
+    #[test]
+    fn returns_email_prompt_without_added_line_breaks() {
+        let o = no_overrides();
+        let prompt = get_profile_prompt(Some("Mail"), &o);
+        assert!(prompt.to_lowercase().contains("email"));
+        assert!(prompt.to_lowercase().contains("courteous"));
+        assert!(prompt.contains("do not add a greeting/sign-off layout"));
+    }
 }

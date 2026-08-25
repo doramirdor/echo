@@ -72,3 +72,55 @@ pub async fn refine(
     log::info!("[bedrock] Refined: \"{}\"", text);
     Ok(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mirrors newRefiners.test.ts `BedrockRefiner > throws without credentials`.
+    // The empty-credential guard returns before any network call.
+    #[tokio::test]
+    async fn refine_errors_when_credentials_missing() {
+        let err = refine("", "", "us-east-1", "model", "refine me", "sys")
+            .await
+            .unwrap_err();
+        assert!(err.contains("AWS credentials"), "unexpected error: {}", err);
+    }
+
+    // Ports the pure seam of `signs the request (Authorization header) and
+    // parses content`. The live URL/response-parse are inline in the async HTTP
+    // path (no fetch-mock equivalent → skipped), but the Authorization header
+    // the TS asserts on is produced by `sign_request`, which is a separate
+    // callable fn. This reproduces bedrock's exact signing config and matches
+    // the two TS assertions on the Authorization header.
+    #[tokio::test]
+    async fn signs_request_with_bedrock_signed_headers() {
+        let signed = sign_request(&SigV4Request {
+            method: "POST",
+            host: "bedrock-runtime.us-east-1.amazonaws.com",
+            path: "/model/anthropic.claude-3-5-haiku-20241022-v1:0/invoke",
+            region: "us-east-1",
+            service: "bedrock",
+            body: "{}",
+            access_key_id: "AKIDEXAMPLE",
+            secret_access_key: "secret",
+            content_type: Some("application/json"),
+            amz_date: Some("20150830T123600Z"),
+        });
+        let auth = signed
+            .iter()
+            .find(|(k, _)| k == "Authorization")
+            .map(|(_, v)| v.clone())
+            .expect("Authorization header present");
+        assert!(
+            auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"),
+            "unexpected authorization: {}",
+            auth
+        );
+        assert!(
+            auth.contains("SignedHeaders=content-type;host;x-amz-date"),
+            "unexpected authorization: {}",
+            auth
+        );
+    }
+}

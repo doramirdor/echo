@@ -61,6 +61,12 @@ enum Internal {
 /// budget is exhausted it sends the last Input Monitoring status once on
 /// `dead_tx` (mirroring the TS `'dead'` event) and then keeps retrying every
 /// `RESTART_BUDGET_RESET_MS`.
+///
+/// `dead_tx` also fires once when the helper reports `im-denied`. Without Input
+/// Monitoring the helper does NOT fail: its listen-only tap is created fine, it
+/// prints `ready`, and it then sits there receiving zero events forever — so the
+/// restart budget never trips and the fn hotkey is dead with nothing said. The
+/// denied report is the only signal we get, so treat it as a failure too.
 pub fn start(
     tx: mpsc::UnboundedSender<FnAction>,
     dead_tx: mpsc::UnboundedSender<String>,
@@ -74,6 +80,9 @@ pub fn start(
         // so a plain local is enough — no lock needed.
         let mut attempts: u32 = 0;
         let mut dead_emitted = false;
+        // Latched for the whole app run (never reset by `ready`/restarts) so a
+        // restart loop can't turn one missing grant into a notification stream.
+        let mut im_denied_emitted = false;
 
         // Periodically refresh the restart budget so an exhausted monitor gets a
         // fresh burst of retries instead of staying dead for the rest of the
@@ -97,7 +106,16 @@ pub fn start(
 
             // `run_once` returns when the helper process exits. `attempts` and
             // `dead_emitted` are reset to 0/false from inside on every `ready`.
-            run_once(&bin, &tx, &im_status, &mut attempts, &mut dead_emitted).await;
+            run_once(
+                &bin,
+                &tx,
+                &dead_tx,
+                &im_status,
+                &mut attempts,
+                &mut dead_emitted,
+                &mut im_denied_emitted,
+            )
+            .await;
 
             if attempts < MAX_RESTART_ATTEMPTS {
                 attempts += 1;
@@ -142,9 +160,11 @@ pub fn start(
 async fn run_once(
     bin: &Path,
     tx: &mpsc::UnboundedSender<FnAction>,
+    dead_tx: &mpsc::UnboundedSender<String>,
     im_status: &Arc<Mutex<String>>,
     attempts: &mut u32,
     dead_emitted: &mut bool,
+    im_denied_emitted: &mut bool,
 ) {
     let mut child = match Command::new(bin)
         .stdin(std::process::Stdio::piped())
@@ -237,7 +257,16 @@ async fn run_once(
                 }
 
                 "im-granted" => *im_status.lock().await = "granted".into(),
-                "im-denied" => *im_status.lock().await = "denied".into(),
+                "im-denied" => {
+                    *im_status.lock().await = "denied".into();
+                    // The tap still gets created and `ready` still follows — the
+                    // helper just never receives an event. Nothing else will ever
+                    // notice, so surface it here (once per app run).
+                    if !*im_denied_emitted {
+                        *im_denied_emitted = true;
+                        let _ = dead_tx.send("denied".to_string());
+                    }
+                }
                 "im-unknown" => *im_status.lock().await = "unknown".into(),
                 "ready" => {
                     // The helper came up cleanly — refresh the restart budget and

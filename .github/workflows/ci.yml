@@ -11,22 +11,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: '20'
-          cache: 'npm'
+          components: clippy
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
-      - name: Type check
-        run: npx tsc --noEmit
-
-      - name: Lint
-        run: npm run lint
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
 
       - name: Test
-        run: npm test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Build (Electron)
-        run: npm run electron:build
+      - name: Build
+        run: cargo build --manifest-path src-tauri/Cargo.toml

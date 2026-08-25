@@ -9,8 +9,29 @@ document.addEventListener('DOMContentLoaded', () => {
       item.classList.add('active');
       const content = document.getElementById('tab-' + item.dataset.tab);
       if (content) content.classList.add('active');
+      refreshTab(item.dataset.tab);
     });
   });
+
+  // Home / Insights / History all render from the run log, which grows with every
+  // dictation. The settings window is long-lived — reopening it just focuses the
+  // existing window rather than reloading the page — so without an explicit
+  // refresh these tabs keep showing the run log as it was when the window first
+  // opened, and every dictation since looks like it was never saved.
+  function activeTab() {
+    const active = document.querySelector('.nav-item[data-tab].active');
+    return active ? active.dataset.tab : null;
+  }
+
+  function refreshTab(tab) {
+    if (tab === 'home') loadHome();
+    else if (tab === 'insights') loadStats();
+    else if (tab === 'history') refreshHistory();
+  }
+
+  function refreshRunLogViews() {
+    refreshTab(activeTab());
+  }
 
   // Load settings
   async function loadSettings() {
@@ -120,6 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Human-readable engine labels for the read-only summaries.
   const STT_ENGINE_LABELS = {
     whisper: 'Whisper (on-device)',
+    parakeet: 'Parakeet (on-device)',
     macos: 'macOS Speech Recognition',
     groq: 'Groq (cloud)',
     deepgram: 'Deepgram (cloud)',
@@ -173,6 +195,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let label = 'Detail', detail = '', muted = true;
     if (engine === 'whisper') {
       label = 'Model'; detail = s.whisperModelName || 'ggml-base.en.bin'; muted = false;
+    } else if (engine === 'parakeet') {
+      label = 'Model'; detail = s.parakeetModelName || 'tdt-0.6b-v3-q8_0.gguf'; muted = false;
     } else if (engine === 'macos') {
       label = 'Runs'; detail = 'On-device, no key';
     } else {
@@ -375,138 +399,195 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Whisper model selector
-  async function loadWhisperModels() {
-    var select = document.getElementById('whisperModelName');
-    var section = document.getElementById('whisper-model-section');
-    var dlBtn = document.getElementById('download-model-btn');
-    var statusEl = document.getElementById('model-download-status');
-    var sttEngine = document.getElementById('sttEngine');
-    var binaryBadge = document.getElementById('whisper-binary-badge');
-    var buildBtn = document.getElementById('build-binary-btn');
-    var buildStatus = document.getElementById('build-status');
-    if (!select || !section) return;
+  // The on-device engines (whisper.cpp, parakeet.cpp) share a shape: a binary
+  // compiled on demand plus a downloadable model. One config drives both
+  // sections so they can't drift.
+  var LOCAL_ENGINES = [
+    {
+      engine: 'whisper',
+      buildLabel: 'whisper.cpp',
+      settingKey: 'whisperModelName',
+      defaultModel: 'ggml-base.en.bin',
+      ids: {
+        section: 'whisper-model-section', select: 'whisperModelName',
+        badge: 'whisper-binary-badge', buildBtn: 'build-binary-btn',
+        buildStatus: 'build-status', dlBtn: 'download-model-btn',
+        dlStatus: 'model-download-status',
+      },
+      api: {
+        check: function(m) { return api.checkWhisperBinary(m); },
+        list: function() { return api.listWhisperModels(); },
+        build: function() { return api.buildWhisperBinary(); },
+        download: function(m) { return api.downloadWhisperModel(m); },
+      },
+    },
+    {
+      engine: 'parakeet',
+      buildLabel: 'parakeet.cpp',
+      settingKey: 'parakeetModelName',
+      defaultModel: 'tdt-0.6b-v3-q8_0.gguf',
+      ids: {
+        section: 'parakeet-model-section', select: 'parakeetModelName',
+        badge: 'parakeet-binary-badge', buildBtn: 'build-parakeet-btn',
+        buildStatus: 'parakeet-build-status', dlBtn: 'download-parakeet-btn',
+        dlStatus: 'parakeet-download-status',
+      },
+      api: {
+        check: function(m) { return api.checkParakeetBinary(m); },
+        list: function() { return api.listParakeetModels(); },
+        build: function() { return api.buildParakeetBinary(); },
+        download: function(m) { return api.downloadParakeetModel(m); },
+      },
+    },
+  ];
 
-    // Show/hide based on STT engine
-    function toggleSection() {
-      section.style.display = sttEngine.value === 'whisper' ? '' : 'none';
-    }
-    sttEngine.addEventListener('change', function() {
-      toggleSection();
-      if (sttEngine.value === 'whisper') checkBinary();
-    });
-    // Set initial value from settings before toggling visibility
-    var s0 = await api.getSettings();
-    sttEngine.value = s0.sttEngine || 'whisper';
-    toggleSection();
+  // Wire one local-engine section. Returns handles the shared progress
+  // subscriptions use to route ticks to whichever engine is selected.
+  async function setupLocalEngine(cfg) {
+    var el = {};
+    Object.keys(cfg.ids).forEach(function(k) { el[k] = document.getElementById(cfg.ids[k]); });
+    if (!el.select || !el.section) return null;
 
-    // Check binary status
     async function checkBinary() {
-      var status = await api.checkWhisperBinary(select.value);
+      var status = await cfg.api.check(el.select.value);
       if (status.binary) {
-        binaryBadge.textContent = 'Installed';
-        binaryBadge.className = 'status status-ok';
-        buildBtn.style.display = 'none';
-        if (buildStatus) buildStatus.style.display = 'none';
+        el.badge.textContent = 'Installed';
+        el.badge.className = 'status status-ok';
+        el.buildBtn.style.display = 'none';
+        if (el.buildStatus) el.buildStatus.style.display = 'none';
       } else {
-        binaryBadge.textContent = 'Not found';
-        binaryBadge.className = 'status status-error';
-        buildBtn.style.display = '';
+        el.badge.textContent = 'Not found';
+        el.badge.className = 'status status-error';
+        el.buildBtn.style.display = '';
       }
     }
-    checkBinary();
 
-    // Build binary button
-    buildBtn.addEventListener('click', async function() {
-      buildBtn.disabled = true;
-      buildBtn.innerHTML = '<span class="spinner"></span>Building...';
-      buildStatus.style.display = '';
-      buildStatus.textContent = 'Cloning and compiling whisper.cpp...';
-      buildStatus.style.color = '#888';
-
-      var result = await api.buildWhisperBinary();
-      if (result.success) {
-        buildBtn.style.display = 'none';
-        buildStatus.textContent = 'Build complete!';
-        buildStatus.style.color = 'var(--success)';
-        binaryBadge.textContent = 'Installed';
-        binaryBadge.className = 'status status-ok';
-        setTimeout(function() { buildStatus.style.display = 'none'; }, 3000);
+    async function updateDlButton() {
+      var status = await cfg.api.check(el.select.value);
+      if (status.model) {
+        el.dlBtn.style.display = 'none';
+        el.dlStatus.textContent = 'Model ready';
+        el.dlStatus.style.color = 'var(--success)';
       } else {
-        buildBtn.disabled = false;
-        buildBtn.textContent = 'Retry';
-        buildStatus.textContent = 'Failed: ' + result.error;
-        buildStatus.style.color = 'var(--danger)';
+        el.dlBtn.style.display = '';
+        el.dlStatus.textContent = 'Model not downloaded';
+        el.dlStatus.style.color = 'var(--warning)';
+      }
+    }
+
+    el.buildBtn.addEventListener('click', async function() {
+      el.buildBtn.disabled = true;
+      el.buildBtn.innerHTML = '<span class="spinner"></span>Building...';
+      el.buildStatus.style.display = '';
+      el.buildStatus.textContent = 'Cloning and compiling ' + cfg.buildLabel + '...';
+      el.buildStatus.style.color = '#888';
+
+      var result = await cfg.api.build();
+      if (result.success) {
+        el.buildBtn.style.display = 'none';
+        el.buildStatus.textContent = 'Build complete!';
+        el.buildStatus.style.color = 'var(--success)';
+        el.badge.textContent = 'Installed';
+        el.badge.className = 'status status-ok';
+        setTimeout(function() { el.buildStatus.style.display = 'none'; }, 3000);
+      } else {
+        el.buildBtn.disabled = false;
+        el.buildBtn.textContent = 'Retry';
+        el.buildStatus.textContent = 'Failed: ' + result.error;
+        el.buildStatus.style.color = 'var(--danger)';
       }
     });
 
-    // Build progress
-    api.onBuildProgress(function(message) {
-      if (buildStatus) {
-        buildStatus.style.display = '';
-        buildStatus.textContent = message;
+    el.dlBtn.addEventListener('click', async function() {
+      el.dlBtn.disabled = true;
+      el.dlBtn.textContent = 'Downloading...';
+      el.dlStatus.textContent = 'Starting download...';
+      el.dlStatus.style.color = '#888';
+
+      var result = await cfg.api.download(el.select.value);
+      if (result.success) {
+        el.dlBtn.style.display = 'none';
+        el.dlStatus.textContent = 'Downloaded!';
+        el.dlStatus.style.color = 'var(--success)';
+        updateDlButton();
+      } else {
+        el.dlBtn.disabled = false;
+        el.dlBtn.textContent = 'Retry';
+        el.dlStatus.textContent = 'Failed: ' + result.error;
+        el.dlStatus.style.color = 'var(--danger)';
       }
     });
 
-    // Populate models
-    var models = await api.listWhisperModels();
-    select.innerHTML = '';
+    var models = await cfg.api.list();
+    el.select.innerHTML = '';
     models.forEach(function(m) {
       var opt = document.createElement('option');
       opt.value = m.name;
       opt.textContent = m.label + ' (' + m.size + ')' + (m.downloaded ? ' \u2713' : '');
-      select.appendChild(opt);
+      el.select.appendChild(opt);
     });
 
-    // Set current value
     var s = await api.getSettings();
-    select.value = s.whisperModelName || 'ggml-base.en.bin';
+    el.select.value = s[cfg.settingKey] || cfg.defaultModel;
 
-    // Update download button visibility
-    async function updateDlButton() {
-      var status = await api.checkWhisperBinary(select.value);
-      if (status.model) {
-        dlBtn.style.display = 'none';
-        statusEl.textContent = 'Model ready';
-        statusEl.style.color = 'var(--success)';
-      } else {
-        dlBtn.style.display = '';
-        statusEl.textContent = 'Model not downloaded';
-        statusEl.style.color = 'var(--warning)';
-      }
-    }
-    updateDlButton();
-
-    select.addEventListener('change', function() {
-      api.setSetting('whisperModelName', select.value);
+    el.select.addEventListener('change', function() {
+      api.setSetting(cfg.settingKey, el.select.value);
       updateDlButton();
+      checkBinary();
     });
 
-    // Download button
-    dlBtn.addEventListener('click', async function() {
-      dlBtn.disabled = true;
-      dlBtn.textContent = 'Downloading...';
-      statusEl.textContent = 'Starting download...';
-      statusEl.style.color = '#888';
+    return {
+      engine: cfg.engine,
+      el: el,
+      refresh: function() { checkBinary(); updateDlButton(); },
+    };
+  }
 
-      var result = await api.downloadWhisperModel(select.value);
-      if (result.success) {
-        dlBtn.style.display = 'none';
-        statusEl.textContent = 'Downloaded!';
-        statusEl.style.color = 'var(--success)';
-        updateDlButton();
-      } else {
-        dlBtn.disabled = false;
-        dlBtn.textContent = 'Retry';
-        statusEl.textContent = 'Failed: ' + result.error;
-        statusEl.style.color = 'var(--danger)';
+  // Local model selectors (whisper.cpp / parakeet.cpp)
+  async function loadLocalEngines() {
+    var sttEngine = document.getElementById('sttEngine');
+    if (!sttEngine) return;
+
+    var engines = [];
+    for (var i = 0; i < LOCAL_ENGINES.length; i++) {
+      var handle = await setupLocalEngine(LOCAL_ENGINES[i]);
+      if (handle) engines.push(handle);
+    }
+
+    function toggleSections() {
+      engines.forEach(function(e) {
+        var active = sttEngine.value === e.engine;
+        e.el.section.style.display = active ? '' : 'none';
+        if (active) e.refresh();
+      });
+    }
+    sttEngine.addEventListener('change', toggleSections);
+
+    // Set initial value from settings before toggling visibility
+    var s0 = await api.getSettings();
+    sttEngine.value = s0.sttEngine || 'whisper';
+    toggleSections();
+
+    // Both engines emit the same progress events; route each tick to whichever
+    // engine is selected so a hidden section never eats the update.
+    function active() {
+      for (var i = 0; i < engines.length; i++) {
+        if (engines[i].engine === sttEngine.value) return engines[i];
+      }
+      return null;
+    }
+    api.onBuildProgress(function(message) {
+      var e = active();
+      if (e && e.el.buildStatus) {
+        e.el.buildStatus.style.display = '';
+        e.el.buildStatus.textContent = message;
       }
     });
-
-    // Download progress
     api.onDownloadProgress(function(p) {
+      var e = active();
+      if (!e) return;
       var percent = (p && typeof p === 'object') ? p.percent : p;
-      statusEl.textContent = 'Downloading... ' + percent + '%';
+      e.el.dlStatus.textContent = 'Downloading... ' + percent + '%';
     });
   }
 
@@ -726,6 +807,17 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       list.innerHTML = '<div style="color:#FF3B30">Failed to load history</div>';
     }
+  }
+
+  // Reload the History tab, preserving whatever the user has typed in the search
+  // box (a plain loadHistory() would silently drop them back to the full list).
+  async function refreshHistory() {
+    var search = document.getElementById('history-search');
+    var query = search ? search.value.trim() : '';
+    if (!query) return loadHistory();
+    try {
+      renderHistory(await api.searchRunLog(query));
+    } catch (e) { /* leave the current list up */ }
   }
 
   var clearHistoryBtn = document.getElementById('clear-history-btn');
@@ -1074,6 +1166,16 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) { /* ignore */ }
   }
 
+  // YYYY-MM-DD for a Date in the *local* calendar. `toISOString()` converts to
+  // UTC first, so east of Greenwich it turns local midnight into the previous
+  // day — which shifted every heatmap cell one day off from the backend's
+  // dailyActivity keys.
+  function localDateKey(d) {
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  }
+
   // Stats / Insights
   async function loadStats() {
     try {
@@ -1194,7 +1296,7 @@ document.addEventListener('DOMContentLoaded', () => {
       var currentDate = new Date(startDate);
       var currentWeek = [];
       while (currentDate <= endDate) {
-        var dateStr = currentDate.toISOString().split('T')[0];
+        var dateStr = localDateKey(currentDate);
         var count = dateMap[dateStr] || 0;
         var level = 0;
         if (count > 0) {
@@ -1246,7 +1348,7 @@ document.addEventListener('DOMContentLoaded', () => {
         for (var col = 0; col < weeks.length; col++) {
           var cell = weeks[col][row];
           if (cell) {
-            var isFuture = cell.date > today.toISOString().split('T')[0];
+            var isFuture = cell.date > localDateKey(today);
             html += '<div class="heatmap-cell' + (isFuture ? '' : ' level-' + cell.level) + '" title="' + cell.date + ': ' + cell.count + ' dictations"></div>';
           } else {
             html += '<div class="heatmap-cell"></div>';
@@ -1410,6 +1512,19 @@ document.addEventListener('DOMContentLoaded', () => {
   // Re-check when the window regains focus (e.g. after granting in System Settings)
   window.addEventListener('focus', loadPermissions);
 
+  // …and pick up any dictations that happened while the window was in the
+  // background, which is the normal case: you dictate into another app, then come
+  // back here to look at the history.
+  window.addEventListener('focus', refreshRunLogViews);
+
+  // Live refresh while the window is visible. The backend writes the run log
+  // before emitting these, so the new entry is always already there.
+  if (api.onStateChange) {
+    api.onStateChange(function(state) {
+      if (state === 'idle' || state === 'error') refreshRunLogViews();
+    });
+  }
+
   // Init
   loadHome();
   loadPermissions();
@@ -1418,7 +1533,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMemory();
   loadProjectContext();
   loadAudioDevices();
-  loadWhisperModels();
+  loadLocalEngines();
   checkPromptStaleness();
   loadHistory();
   loadTemplates();

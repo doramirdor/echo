@@ -18,16 +18,21 @@ npm install
 bash scripts/package-mac.sh
 ```
 
-This compiles the native helpers, builds `whisper-cli`, bundles them into the
-app, and produces a small (~25 MB) DMG:
+This compiles the native helpers, builds `whisper-cli` and `parakeet-cli`,
+bundles them into the app, and produces a small DMG:
 
 ```
 src-tauri/target/release/bundle/dmg/Echo_0.1.0_<arch>.dmg
 ```
 
-The helpers + `whisper-cli` are baked in — on first launch the app copies them
-into `~/Library/Application Support/echo`, so your friend needs no Xcode tools,
-Homebrew, or git/cmake.
+The helpers + `whisper-cli` + `parakeet-cli` are baked in — on first launch the
+app copies them into `~/Library/Application Support/echo`, so your friend needs
+no Xcode tools, Homebrew, or git/cmake.
+
+> Building `parakeet-cli` adds several minutes the first time (it clones and
+> compiles parakeet.cpp). Run `ECHO_SKIP_PARAKEET=1 bash scripts/package-mac.sh`
+> to leave it out — the opt-in Parakeet engine then requires your friend to build
+> the binary from Settings, which needs git/cmake.
 
 > **The Whisper model (~142 MB) is not bundled** — it keeps the DMG small. On
 > first launch, onboarding downloads it once (Setup Whisper → the model lands in

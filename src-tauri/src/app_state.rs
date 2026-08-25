@@ -133,6 +133,45 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn starts_in_idle_state() {
+        let s = AppState::new();
+        assert_eq!(s.get_state().await, EchoState::Idle);
+    }
+
+    #[tokio::test]
+    async fn transitions_through_recording_pipeline() {
+        let s = AppState::new();
+
+        s.set_state(EchoState::Recording, None).await;
+        assert!(s.is_recording().await);
+        assert!(s.is_busy().await);
+
+        s.set_state(EchoState::Transcribing, None).await;
+        assert!(!s.is_recording().await);
+        assert!(s.is_busy().await);
+
+        s.set_state(EchoState::Idle, None).await;
+        assert!(!s.is_busy().await);
+    }
+
+    #[tokio::test]
+    async fn stores_transcription_results() {
+        let s = AppState::new();
+        s.set_transcription("raw text".into(), "refined text".into()).await;
+        let inner = s.inner.lock().await;
+        assert_eq!(inner.last_transcription.as_deref(), Some("raw text"));
+        assert_eq!(inner.last_refined_text.as_deref(), Some("refined text"));
+    }
+
+    #[tokio::test]
+    async fn stores_error_messages() {
+        let s = AppState::new();
+        s.set_state(EchoState::Error, Some("test error".into())).await;
+        let inner = s.inner.lock().await;
+        assert_eq!(inner.error_message.as_deref(), Some("test error"));
+    }
+
+    #[tokio::test]
     async fn records_and_clears_last_insertion() {
         let s = AppState::new();
         assert!(s.inner.lock().await.last_inserted_text.is_none());

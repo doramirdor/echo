@@ -464,9 +464,11 @@ mod tests {
     #[test]
     fn converts_brackets_arrows_and_operators() {
         assert_eq!(apply_code_grammar("open brace close brace"), "{ }");
+        assert_eq!(apply_code_grammar("open bracket close bracket"), "[ ]");
         assert_eq!(apply_code_grammar("fat arrow"), "=>");
         assert_eq!(apply_code_grammar("thin arrow"), "->");
         assert_eq!(apply_code_grammar("triple equals"), "===");
+        assert_eq!(apply_code_grammar("double equals"), "==");
         assert_eq!(apply_code_grammar("not equal"), "!=");
     }
 
@@ -474,6 +476,7 @@ mod tests {
     fn prose_risky_symbols_need_a_suffix() {
         assert_eq!(apply_code_grammar("meet me at the hash of things"), "meet me at the hash of things");
         assert_eq!(apply_code_grammar("hash sign"), "#");
+        assert_eq!(apply_code_grammar("at sign"), "@");
         assert_eq!(apply_code_grammar("dollar sign"), "$");
         assert_eq!(apply_code_grammar("pipe symbol"), "|");
     }
@@ -510,5 +513,10 @@ mod tests {
         );
         assert!(on.text.contains("user_id"));
         assert!(on.commands.iter().any(|c| c == "code-grammar"));
+    }
+
+    #[test]
+    fn leaves_ordinary_code_words_untouched() {
+        assert_eq!(apply_code_grammar("return the value"), "return the value");
     }
 }
