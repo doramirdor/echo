@@ -17,6 +17,8 @@
   <link rel="icon" type="image/svg+xml" href="img/logo.svg" />
   <link rel="icon" type="image/png" href="img/icon.png" />
   <link rel="stylesheet" href="styles.css" />
+  <!-- .reveal starts at opacity 0 and is un-hidden by IntersectionObserver; without JS it must not stay blank. -->
+  <noscript><style>.reveal { opacity: 1 !important; }</style></noscript>
 </head>
 <body>
   <!-- ===== NAV ===== -->
@@ -80,6 +82,10 @@
             </button>
           </div>
           </div>
+          <p class="hero__rel">
+            <a class="hero__rel-tag" href="https://github.com/doramirdor/echo/releases/latest" target="_blank" rel="noopener"><span id="relTag">v0.2.0</span></a>
+            <span>Universal build &middot; Apple silicon &amp; Intel &middot; macOS 13+</span>
+          </p>
           <ul class="hero__trust" aria-label="Highlights">
             <li><span class="tick"></span> Open source</li>
             <li><span class="tick"></span> Runs on your Mac</li>
@@ -317,7 +323,7 @@
             <div><strong>$0</strong><span>free, forever</span></div>
             <div><strong>100%</strong><span>runs on your Mac</span></div>
             <div><strong>MIT</strong><span>licensed</span></div>
-            <div><strong>8</strong><span>LLM providers</span></div>
+            <div><strong>9</strong><span>LLM providers</span></div>
           </div>
           <div class="oss__cta">
             <a class="btn btn--dark" href="https://github.com/doramirdor/echo" target="_blank" rel="noopener">
@@ -345,11 +351,40 @@ npm start
           </div>
           <ul class="oss__list">
             <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v6c0 4.5-3.2 7-8 8-4.8-1-8-3.5-8-8V7z"/></svg></span><div><strong>MIT License</strong><span>Permissive and production-ready.</span></div></li>
-            <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 7 3 12 8 17"/><polyline points="16 7 21 12 16 17"/></svg></span><div><strong>Hackable</strong><span>Parallel TypeScript &amp; Rust implementations.</span></div></li>
+            <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 7 3 12 8 17"/><polyline points="16 7 21 12 16 17"/></svg></span><div><strong>Hackable</strong><span>One Rust core behind a thin Tauri shell.</span></div></li>
             <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span><div><strong>Self-hosted ready</strong><span>Runs on your Mac. Your data stays yours.</span></div></li>
             <li><span class="oss__ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.4"/><path d="M3 19c0-3 2.7-5 6-5s6 2 6 5M15 18c0-1.8 1-3.5 4-3.5"/></svg></span><div><strong>Community powered</strong><span>Built by contributors, for contributors.</span></div></li>
           </ul>
         </div>
+      </div>
+    </section>
+
+    <!-- ===== WHAT'S NEW ===== -->
+    <section class="whatsnew" id="whatsnew">
+      <div class="container whatsnew__inner">
+        <div class="whatsnew__head reveal">
+          <h2 class="section__title">What&rsquo;s new in <span id="relTitle">v0.2.0</span>.</h2>
+          <p class="section__lead">Echo now installs with one command, keeps its macOS permissions, and ships from a single Rust core.</p>
+          <a class="link-arrow" href="https://github.com/doramirdor/echo/releases" target="_blank" rel="noopener">All releases &rarr;</a>
+        </div>
+
+        <ol class="rel reveal">
+          <li class="rel__item">
+            <span class="rel__ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
+            <h3>Install with one command</h3>
+            <p><code>npx echo-whisper</code> downloads the universal build and installs it. No Xcode, git, or cmake on the machine.</p>
+          </li>
+          <li class="rel__item">
+            <span class="rel__ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></span>
+            <h3>Permissions that stick</h3>
+            <p>Fixed how Echo reports Accessibility and Input Monitoring, and freed the <kbd>fn</kbd> key so the hotkey works on a fresh Mac.</p>
+          </li>
+          <li class="rel__item">
+            <span class="rel__ic" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></span>
+            <h3>One Rust core</h3>
+            <p>The parallel TypeScript build is gone. Everything runs through the Tauri app, so there is half as much code to read and keep honest.</p>
+          </li>
+        </ol>
       </div>
     </section>
 
@@ -385,6 +420,7 @@ npm start
         <div>
           <h4>Product</h4>
           <a href="#features">Features</a>
+          <a href="#whatsnew">What&rsquo;s new</a>
           <a href="#how">How it works</a>
           <a href="#workflows">Workflows</a>
           <a href="#opensource">Open source</a>

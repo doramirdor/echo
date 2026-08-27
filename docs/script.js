@@ -100,6 +100,23 @@
     }, { threshold: 0.3 }).observe(demo);
   }
 
+  /* ---------- Latest release tag (static markup is the fallback) ---------- */
+  var relTag = document.getElementById("relTag");
+  var relTitle = document.getElementById("relTitle");
+  if ((relTag || relTitle) && window.fetch) {
+    fetch("https://api.github.com/repos/doramirdor/echo/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" }
+    })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        // Rate-limited, offline, or draft-only: leave the shipped version in place.
+        if (!d || !d.tag_name) return;
+        if (relTag) relTag.textContent = d.tag_name;
+        if (relTitle) relTitle.textContent = d.tag_name;
+      })
+      .catch(function () {});
+  }
+
   /* ---------- Copy to clipboard ---------- */
   function copyToClipboard(text, ok) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
