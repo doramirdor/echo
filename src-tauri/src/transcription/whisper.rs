@@ -450,19 +450,27 @@ pub async fn build_binary(progress_cb: impl Fn(&str) + Send + 'static) -> Result
     Ok(())
 }
 
+fn build_path_env() -> String {
+    format!(
+        "{}:/opt/homebrew/bin:/usr/local/bin",
+        std::env::var("PATH").unwrap_or_default()
+    )
+}
+
 fn cmd_exists(name: &str) -> bool {
-    Command::new(name).arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(name)
+        .arg("--version")
+        .env("PATH", build_path_env())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn run_cmd(cmd: &str, args: &[&str], cwd: &Path) -> Result<(), String> {
-    let path_env = format!(
-        "{}:/opt/homebrew/bin:/usr/local/bin",
-        std::env::var("PATH").unwrap_or_default()
-    );
     let output = Command::new(cmd)
         .args(args)
         .current_dir(cwd)
-        .env("PATH", &path_env)
+        .env("PATH", build_path_env())
         .output()
         .map_err(|e| format!("{} failed: {}", cmd, e))?;
 
