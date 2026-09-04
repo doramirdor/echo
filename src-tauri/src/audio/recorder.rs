@@ -365,10 +365,10 @@ impl AudioRecorder {
     }
 
     pub fn check_dependencies() -> (bool, String) {
-        if crate::utils::swift_binary::ensure_swift_binary("record", "scripts/record.swift") {
+        if crate::utils::swift_binary::get_binary_path("record").exists() {
             (true, "native audio recorder ready".into())
         } else {
-            (false, "Audio recorder unavailable. Install Xcode Command Line Tools: xcode-select --install".into())
+            (false, "Audio recorder binary not found. Reinstall Echo or install Xcode Command Line Tools: xcode-select --install".into())
         }
     }
 

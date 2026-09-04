@@ -171,7 +171,7 @@ pub fn ensure_swift_binary(binary_name: &str, source_relative_path: &str) -> boo
         Some(p) => p,
         None => {
             if binary_path.exists() { return true; }
-            log::warn!("[swift-binary] Source not found for {}", binary_name);
+            log::debug!("[swift-binary] Source not found for {}", binary_name);
             return false;
         }
     };

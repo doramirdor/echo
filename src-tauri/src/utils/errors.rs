@@ -2,7 +2,10 @@ pub fn to_user_facing_error(err: &str) -> String {
     let lower = err.to_lowercase();
 
     if lower.contains("audio recorder") || lower.contains("record.swift") || lower.contains("rec: command not found") {
-        return "Audio recording is unavailable. Grant microphone access in System Settings → Privacy & Security → Microphone (and install Xcode Command Line Tools if prompted).".into();
+        if lower.contains("unavailable") || lower.contains("not found") || lower.contains("command not found") || lower.contains("no such file") {
+            return "Audio recorder binary is missing. Reinstall Echo or install Xcode Command Line Tools (xcode-select --install) and restart.".into();
+        }
+        return "Audio recording failed. Grant microphone access in System Settings → Privacy & Security → Microphone.".into();
     }
     if lower.contains("whisper") && (lower.contains("not found") || lower.contains("not ready")) {
         return "Whisper is not set up. Open Settings and build/download Whisper.".into();
@@ -47,8 +50,27 @@ mod tests {
     // Mirrors tests/errors.test.ts. The TS side wraps input in `new Error(...)`
     // and extracts `.message`; the Rust API takes the message string directly.
     #[test]
-    fn maps_audio_recorder_errors() {
-        assert!(to_user_facing_error("rec: command not found").contains("Audio recording"));
+    fn maps_audio_recorder_missing_binary() {
+        let result = to_user_facing_error("rec: command not found");
+        assert!(result.contains("Audio recorder binary is missing"), "got: {}", result);
+    }
+
+    #[test]
+    fn maps_audio_recorder_binary_unavailable() {
+        let result = to_user_facing_error("Native audio recorder unavailable (failed to compile record.swift)");
+        assert!(result.contains("missing"), "got: {}", result);
+    }
+
+    #[test]
+    fn maps_audio_recorder_spawn_no_such_file() {
+        let result = to_user_facing_error("Failed to start native audio recorder: No such file or directory (os error 2)");
+        assert!(result.contains("missing"), "got: {}", result);
+    }
+
+    #[test]
+    fn maps_audio_recorder_permission_errors() {
+        let result = to_user_facing_error("audio recorder permission denied");
+        assert!(result.contains("Microphone"), "got: {}", result);
     }
 
     #[test]

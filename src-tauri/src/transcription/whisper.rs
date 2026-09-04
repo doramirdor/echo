@@ -395,6 +395,13 @@ pub async fn build_binary(progress_cb: impl Fn(&str) + Send + 'static) -> Result
         return Ok(());
     }
 
+    if !cmd_exists("git") {
+        return Err("git is not installed. Install Xcode Command Line Tools: xcode-select --install".into());
+    }
+    if !cmd_exists("cmake") {
+        return Err("cmake is not installed. Install it with: brew install cmake".into());
+    }
+
     let tmp_dir = std::env::temp_dir().join("echo-whisper-build");
     fs::create_dir_all(bin_dir()).map_err(|e| e.to_string())?;
     fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
@@ -443,15 +450,27 @@ pub async fn build_binary(progress_cb: impl Fn(&str) + Send + 'static) -> Result
     Ok(())
 }
 
-fn run_cmd(cmd: &str, args: &[&str], cwd: &Path) -> Result<(), String> {
-    let path_env = format!(
+fn build_path_env() -> String {
+    format!(
         "{}:/opt/homebrew/bin:/usr/local/bin",
         std::env::var("PATH").unwrap_or_default()
-    );
+    )
+}
+
+fn cmd_exists(name: &str) -> bool {
+    Command::new(name)
+        .arg("--version")
+        .env("PATH", build_path_env())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn run_cmd(cmd: &str, args: &[&str], cwd: &Path) -> Result<(), String> {
     let output = Command::new(cmd)
         .args(args)
         .current_dir(cwd)
-        .env("PATH", &path_env)
+        .env("PATH", build_path_env())
         .output()
         .map_err(|e| format!("{} failed: {}", cmd, e))?;
 
