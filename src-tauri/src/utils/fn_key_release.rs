@@ -42,3 +42,19 @@ pub fn free_fn_key() -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// Hand the 🌐/fn key back to macOS by deleting the override, so the key returns
+/// to whatever the system default is for this Mac (input source / emoji picker).
+/// Used when the user turns Echo's fn trigger off and wants their key back.
+/// `defaults delete` exits non-zero when the key was never written — that's
+/// already the desired state, so treat it as success.
+pub fn restore_fn_key() -> bool {
+    if read_fn_usage_type().is_none() {
+        return true;
+    }
+    Command::new("defaults")
+        .args(["delete", "-g", "AppleFnUsageType"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}

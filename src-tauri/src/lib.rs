@@ -398,6 +398,12 @@ fn free_fn_key() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "ok": utils::fn_key_release::free_fn_key() }))
 }
 
+/// Give the 🌐/fn key back to macOS (undoes `free_fn_key`).
+#[tauri::command]
+fn restore_fn_key() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "ok": utils::fn_key_release::restore_fn_key() }))
+}
+
 #[tauri::command]
 async fn toggle(app: AppHandle, state: tauri::State<'_, EchoApp>) -> Result<(), String> {
     handle_toggle(&app, &state).await;
@@ -873,7 +879,11 @@ async fn handle_hotkey_released(app: &AppHandle, echo: &EchoApp) {
 /// A press held at least this long counts as real speech and is kept (push-to-talk),
 /// so even a quick "yes"/"no" isn't dropped. A shorter press is treated as a mistake
 /// — either the first half of a double-click or a stray tap to be discarded.
-const FN_HOLD_MIN_MS: u128 = 100;
+///
+/// Deliberate fn taps (emoji picker, input source, the key's macOS role) run
+/// ~60-200ms, and at 100ms half of them used to come back as a dictation. Nobody
+/// speaks a word in under a quarter second, so 250ms separates the two cleanly.
+const FN_HOLD_MIN_MS: u128 = 250;
 /// How long to wait after a quick tap for a double-click before discarding the
 /// optimistic recording. Kept above the monitor's double-click window so a real
 /// double-click always lands before the stray-tap discard fires.
@@ -908,6 +918,14 @@ async fn handle_fn_action(
     g: &mut FnGestureState,
     resolve_tx: &mpsc::UnboundedSender<u64>,
 ) {
+    // fn trigger switched off: ignore new gestures entirely (people who use fn
+    // for emoji/input-source/F-keys drive Echo with `hotkey` instead). An
+    // in-flight gesture still gets served so flipping the switch mid-hold can't
+    // strand a recording.
+    if g.mode == FnSessionMode::Idle && !echo.settings.get(|s| s.fn_key_trigger) {
+        return;
+    }
+
     let state = echo.app_state.get_state().await;
     match action {
         FnAction::Press => {
@@ -2226,7 +2244,7 @@ pub fn run() {
             reinsert_text, resize_overlay, get_stats,
             overlay_mouse_enter, overlay_mouse_leave,
             scan_project, open_accessibility_settings,
-            open_input_monitoring_settings, open_microphone_settings, free_fn_key,
+            open_input_monitoring_settings, open_microphone_settings, free_fn_key, restore_fn_key,
             open_screen_recording_settings, open_speech_recognition_settings,
             open_automation_settings,
             complete_onboarding,
@@ -2336,7 +2354,10 @@ pub fn run() {
                                 // would ever report it), or the monitor exhausted its
                                 // restart budget. Either way, say so instead of leaving
                                 // the primary trigger silently dead.
-                                let hotkey = app_handle.state::<EchoApp>().settings.get(|s| s.hotkey.clone());
+                                let echo = app_handle.state::<EchoApp>();
+                                // Nothing to warn about when the user turned the fn trigger off.
+                                if !echo.settings.get(|s| s.fn_key_trigger) { continue; }
+                                let hotkey = echo.settings.get(|s| s.hotkey.clone());
                                 let body = if input_monitoring == "denied" {
                                     format!("fn hotkey inactive — grant Echo Input Monitoring in System Settings > Privacy & Security, then restart Echo. Use {} meanwhile.", hotkey)
                                 } else {
@@ -2365,7 +2386,7 @@ pub fn run() {
                     let echo = app.state::<EchoApp>();
                     (
                         echo.settings.get(|s| s.onboarding_complete),
-                        echo.settings.get(|s| s.fn_key_release_offered),
+                        echo.settings.get(|s| s.fn_key_release_offered || !s.fn_key_trigger),
                         echo.settings.clone(),
                     )
                 };

@@ -100,6 +100,7 @@
     openAccessibilitySettings: () => invoke('open_accessibility_settings'),
     openInputMonitoringSettings: () => invoke('open_input_monitoring_settings'),
     freeFnKey: () => invoke('free_fn_key'),
+    restoreFnKey: () => invoke('restore_fn_key'),
     openMicrophoneSettings: () => invoke('open_microphone_settings'),
     openScreenRecordingSettings: () => invoke('open_screen_recording_settings'),
     openSpeechRecognitionSettings: () => invoke('open_speech_recognition_settings'),

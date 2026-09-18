@@ -47,6 +47,10 @@ pub struct EchoSettings {
     pub use_window_context: bool,
     pub context_provider: String,
     pub recording_mode: String,
+    /// Whether a lone fn/Globe press starts a recording. Off for people who use
+    /// fn for its macOS role (emoji picker, input source, function keys) — the
+    /// `hotkey` shortcut still works.
+    pub fn_key_trigger: bool,
     pub start_delay: u64,
     pub audio_device: String,
     pub custom_prompt_date: String,
@@ -106,6 +110,7 @@ impl Default for EchoSettings {
             use_window_context: true,
             context_provider: "none".into(),
             recording_mode: "toggle".into(),
+            fn_key_trigger: true,
             start_delay: 0,
             audio_device: String::new(),
             custom_prompt_date: String::new(),

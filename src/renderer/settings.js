@@ -59,6 +59,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (claudeApiKey) claudeApiKey.value = s.claudeApiKey || '';
     const startDelay = document.getElementById('startDelay');
     if (startDelay) startDelay.value = s.startDelay || 0;
+    const fnKeyTrigger = document.getElementById('fnKeyTrigger');
+    if (fnKeyTrigger) fnKeyTrigger.checked = s.fnKeyTrigger !== false;
     const silenceDetection = document.getElementById('silenceDetection');
     if (silenceDetection) silenceDetection.checked = s.silenceDetection !== false;
     const noiseReduction = document.getElementById('noiseReduction');
@@ -390,12 +392,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Checkbox settings
-  ['openAtLogin', 'useWindowContext', 'captureScreenshots', 'refinementEnabled', 'grammarCheck', 'autoFormatContent', 'learnFromEdits', 'silenceDetection', 'noiseReduction', 'whisperMode', 'voiceCommandsEnabled'].forEach(id => {
+  ['openAtLogin', 'fnKeyTrigger', 'useWindowContext', 'captureScreenshots', 'refinementEnabled', 'grammarCheck', 'autoFormatContent', 'learnFromEdits', 'silenceDetection', 'noiseReduction', 'whisperMode', 'voiceCommandsEnabled'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', function() {
+      currentSettings[id] = this.checked;
       api.setSetting(id, this.checked);
       if (id === 'refinementEnabled') updateRefinementDependents();
+      // The fn (globe) key row only matters while the fn trigger is on, and it
+      // flips between "Free it" and "Restore" with this switch.
+      if (id === 'fnKeyTrigger') loadPermissions();
     });
   });
 
@@ -1447,9 +1453,17 @@ document.addEventListener('DOMContentLoaded', () => {
       // macOS is using fn to change input source, it eats the tap before the
       // hotkey fires. One click fixes it, so this offers "Free it", not "Open".
       var fnKey = s.fnKey || { ok: false, status: 'unknown' };
-      renderPerm('perm-fnkey', 'perm-fix-fnkey', fnKey.ok
-        ? { label: 'Free', cls: 'status-ok', showFix: false }
-        : { label: 'Used by macOS', cls: 'status-warn', showFix: true, fixLabel: 'Free it' });
+      if (currentSettings.fnKeyTrigger === false) {
+        // Trigger off: Echo doesn't need the key. Offer it back to macOS if it
+        // was freed, so turning the trigger off also returns the user's fn key.
+        renderPerm('perm-fnkey', 'perm-fix-fnkey', fnKey.ok
+          ? { label: 'Freed for Echo', cls: 'status-warn', showFix: true, fixLabel: 'Give back' }
+          : { label: 'Used by macOS', cls: 'status-ok', showFix: false });
+      } else {
+        renderPerm('perm-fnkey', 'perm-fix-fnkey', fnKey.ok
+          ? { label: 'Free', cls: 'status-ok', showFix: false }
+          : { label: 'Used by macOS', cls: 'status-warn', showFix: true, fixLabel: 'Free it' });
+      }
 
       // Situational permissions. Screen Recording carries a real TCC status;
       // Speech Recognition and Automation have no query API, so they read
@@ -1490,14 +1504,15 @@ document.addEventListener('DOMContentLoaded', () => {
   if (permFixInput) permFixInput.addEventListener('click', function() { if (api.openInputMonitoringSettings) api.openInputMonitoringSettings(); });
   var permFixFnKey = document.getElementById('perm-fix-fnkey');
   if (permFixFnKey) permFixFnKey.addEventListener('click', async function() {
-    if (!api.freeFnKey) return;
+    var giveBack = currentSettings.fnKeyTrigger === false;
+    if (giveBack ? !api.restoreFnKey : !api.freeFnKey) return;
     permFixFnKey.disabled = true;
     try {
-      var res = await api.freeFnKey();
+      var res = giveBack ? await api.restoreFnKey() : await api.freeFnKey();
       await loadPermissions();
       // The pref is written, but HIToolbox may only honour it at the next login.
       var hint = document.getElementById('perm-fnkey-hint');
-      if (hint && res && res.ok) hint.style.display = 'block';
+      if (hint && res && res.ok && !giveBack) hint.style.display = 'block';
     } catch (e) { /* ignore */ }
     permFixFnKey.disabled = false;
   });
