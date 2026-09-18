@@ -1132,13 +1132,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function formatHotkey(hk) {
-    if (!hk) return '⌘⇧V';
-    return hk
-      .replace(/CommandOrControl|Command|Cmd|Meta/g, '⌘')
-      .replace(/Control|Ctrl/g, '⌃')
-      .replace(/Shift/g, '⇧')
-      .replace(/Alt|Option/g, '⌥')
-      .replace(/\+/g, '');
+    return api.formatHotkey(hk);
   }
 
   async function loadHome() {
@@ -1149,7 +1143,17 @@ document.addEventListener('DOMContentLoaded', () => {
         greet.textContent = 'Good ' + (h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening');
       }
       var s = await api.getSettings();
-      setText('home-hotkey', formatHotkey(s.hotkey));
+      // With the fn trigger off the hotkey is the only way in, so the hero says
+      // so instead of telling people to hold a key Echo isn't listening to.
+      var sub = document.getElementById('home-hero-sub');
+      if (s.fnKeyTrigger === false) {
+        setText('home-trigger', formatHotkey(s.hotkey));
+        if (sub) sub.textContent = 'Echo types the result at your cursor';
+      } else {
+        setText('home-trigger', 'fn');
+        if (sub) sub.innerHTML = 'or press <kbd id="home-hotkey"></kbd> to toggle \u2014 Echo types the result at your cursor';
+        setText('home-hotkey', formatHotkey(s.hotkey));
+      }
 
       var stats = await api.getStats();
       setText('home-total', (stats.totalWordsDictated || 0).toLocaleString());

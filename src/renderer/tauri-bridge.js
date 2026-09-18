@@ -14,6 +14,13 @@
   window.echo = {
     // Settings
     getSettings: () => invoke('get_settings'),
+    // Accelerator string -> the symbols macOS shows on a menu ("⌘⇧V").
+    formatHotkey: (hk) => (hk || 'CommandOrControl+Shift+V')
+      .replace(/CommandOrControl|Command|Cmd|Meta/g, '\u2318')
+      .replace(/Control|Ctrl/g, '\u2303')
+      .replace(/Shift/g, '\u21e7')
+      .replace(/Alt|Option/g, '\u2325')
+      .replace(/\+/g, ''),
     setSetting: (key, value) => invoke('set_setting', { key, value }),
 
     // Memory

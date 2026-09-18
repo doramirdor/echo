@@ -1,6 +1,6 @@
 {
   "name": "echo",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "Voice-to-text tool for macOS with LLM refinement",
   "scripts": {
     "tauri": "tauri",

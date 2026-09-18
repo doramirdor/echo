@@ -71,7 +71,10 @@
 
     /* === HOVER STATE: show Dictate fn === */
     .container.idle:hover {
-      width: 130px;
+      /* Hugs its content: the badge is "fn" or the hotkey (⌘⇧V), and a fixed
+         width would clip the longer one — the window around it is transparent. */
+      width: auto;
+      padding: 0 14px;
       height: 32px;
       border-radius: 16px;
       background: rgba(30, 30, 30, 0.92);
@@ -307,7 +310,7 @@
         <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
       </svg>
       <span class="dictate-text">Dictate</span>
-      <span class="fn-badge">fn</span>
+      <span class="fn-badge" id="trigger-badge">fn</span>
     </div>
     <div class="dot" id="dot"></div>
     <span class="status" id="status"></span>
@@ -354,7 +357,21 @@
     var dragStartY = 0;
     var DRAG_THRESHOLD = 5;
 
+    // The idle pill advertises the trigger, so it has to follow the fn setting:
+    // with the fn trigger off the badge shows the hotkey instead. Refreshed on
+    // hover (the only time the label is visible) so a change in Settings lands
+    // without restarting the app.
+    var triggerBadge = document.getElementById('trigger-badge');
+    async function refreshTriggerBadge() {
+      try {
+        var s = await api.getSettings();
+        triggerBadge.textContent = s.fnKeyTrigger === false ? api.formatHotkey(s.hotkey) : 'fn';
+      } catch (e) { /* keep whatever is showing */ }
+    }
+    refreshTriggerBadge();
+
     container.addEventListener('mouseenter', function() {
+      refreshTriggerBadge();
       api.overlayMouseEnter();
     });
     container.addEventListener('mouseleave', function() {

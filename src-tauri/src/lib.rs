@@ -1841,7 +1841,10 @@ fn overlay_position(app: &AppHandle, w: f64, h: f64) -> (f64, f64) {
 // the pill and multi-line error text.
 const OVERLAY_IDLE_W: f64 = 76.0;
 const OVERLAY_IDLE_H: f64 = 40.0;
-const OVERLAY_HOVER_W: f64 = 140.0;
+// Wide enough for the hover pill at its longest: "Dictate" plus a hotkey badge
+// (e.g. ⌘⌥⇧V) when the fn trigger is off. The pill hugs its content and the rest
+// of the window is transparent, so the extra width only enlarges the hover area.
+const OVERLAY_HOVER_W: f64 = 168.0;
 const OVERLAY_HOVER_H: f64 = 50.0;
 const OVERLAY_ACTIVE_W: f64 = 340.0;
 const OVERLAY_ACTIVE_H: f64 = 160.0;
